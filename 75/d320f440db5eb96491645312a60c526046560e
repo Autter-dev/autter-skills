@@ -1,0 +1,89 @@
+otel-node-style/SKILL.md
+  s_b3e019178ce01d::t_f4aaaa5586f65b 75-97
+otel-go-rust-style/SKILL.md
+  s_b3e019178ce01d::t_e0815c1b989749 76-89
+autter-runtime-setup/SKILL.md
+  s_b3e019178ce01d::t_b645f4c0705010 77-86
+otel-python-style/SKILL.md
+  s_b3e019178ce01d::t_5b778b14235e16 114-136
+otel-generic-style/SKILL.md
+  s_b3e019178ce01d::t_74f46539d2c017 91-98
+otel-browser-style/SKILL.md
+  s_b3e019178ce01d::t_98dcdea7a4eaac 93,100-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "autter_version": "development:1.6.7",
+  "base_commit_sha": "75d320f440db5eb96491645312a60c526046560e",
+  "branch": "main",
+  "prompts": {
+    "s_b3e019178ce01d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f83ec-87f3-7788-bf62-a1277175ba96",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:133bf92b904e366c8eae152b9c4aff6538634193e40199dc72adf0ed7e25257f",
+      "total_additions": 85,
+      "total_deletions": 0,
+      "accepted_lines": 85,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_b3e019178ce01d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019f83ec-87f3-7788-bf62-a1277175ba96",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:133bf92b904e366c8eae152b9c4aff6538634193e40199dc72adf0ed7e25257f",
+      "stats": {
+        "total_additions": 85,
+        "total_deletions": 0,
+        "accepted_lines": 85,
+        "overriden_lines": 0,
+        "files": {
+          "autter-runtime-setup/SKILL.md": {
+            "total_additions": 10,
+            "total_deletions": 0,
+            "accepted_lines": 10,
+            "overriden_lines": 0
+          },
+          "otel-browser-style/SKILL.md": {
+            "total_additions": 7,
+            "total_deletions": 0,
+            "accepted_lines": 7,
+            "overriden_lines": 0
+          },
+          "otel-generic-style/SKILL.md": {
+            "total_additions": 8,
+            "total_deletions": 0,
+            "accepted_lines": 8,
+            "overriden_lines": 0
+          },
+          "otel-go-rust-style/SKILL.md": {
+            "total_additions": 14,
+            "total_deletions": 0,
+            "accepted_lines": 14,
+            "overriden_lines": 0
+          },
+          "otel-node-style/SKILL.md": {
+            "total_additions": 23,
+            "total_deletions": 0,
+            "accepted_lines": 23,
+            "overriden_lines": 0
+          },
+          "otel-python-style/SKILL.md": {
+            "total_additions": 23,
+            "total_deletions": 0,
+            "accepted_lines": 23,
+            "overriden_lines": 0
+          }
+        }
+      }
+    }
+  }
+}
