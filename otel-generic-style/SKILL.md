@@ -88,6 +88,14 @@ Find that language's method name for these two operations (they exist in
 every OTel SDK) and call them in the top-level error handler / middleware
 so all errors are captured centrally, rather than in every call site.
 
+**Warnings**: add an `autter.severity` attribute (`"fatal" | "error" |
+"warning" | "info"`) to the exception event. Autter stores warnings in the
+same table as errors with that severity, so they group and aggregate
+identically without inflating error counts. Use it for deprecations,
+recoverable failures, and degraded-dependency paths; keep messages
+PII-free and template-stable (numbers/ids are normalised out server-side
+for grouping).
+
 ## Step 5: Sampling guidance
 
 Keep successful-trace sampling low (~1%, `OTEL_TRACES_SAMPLER_ARG=0.01`).

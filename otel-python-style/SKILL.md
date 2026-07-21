@@ -111,6 +111,29 @@ Errors surface as Autter issues whenever a span records an exception
 (`span.record_exception`) or ends with `ERROR` status — this is standard
 OTel behavior, not something Autter needs configured separately.
 
+## Reporting warnings
+
+Autter stores warnings alongside errors with a `severity` column
+(`fatal | error | warning | info`) — declared via the `autter.severity`
+attribute on the exception event. Use this for warning-worthy paths
+(deprecations, degraded dependencies, recoverable failures) so they can
+be aggregated later without being counted as errors:
+
+```python
+with tracer.start_as_current_span("orders.legacy_lookup") as span:
+    span.add_event("exception", {
+        "exception.type": "DeprecationWarning",
+        "exception.message": "Legacy /orders lookup used",
+        "autter.severity": "warning",
+    })
+    span.set_status(trace.Status(trace.StatusCode.ERROR, "deprecated path"))
+```
+
+(The ERROR status is what makes the ingester pick it up; `autter.severity`
+downgrades it to a warning in storage.) Keep messages as stable templates
+— ids and numbers are normalised out server-side for grouping — and never
+include PII.
+
 ## Verify
 
 1. Start the app (with `opentelemetry-instrument` or explicit init).

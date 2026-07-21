@@ -90,11 +90,18 @@ manually anywhere you catch something yourself.
 ```ts
 initAutterBrowser({ endpoint, clientKey?, service, environment?, release?, sessionTracking?, beforeSend? });
 captureException(error, context?);       // report a caught error
+captureMessage(message, severity?, context?); // warning/info without an exception — severity "fatal"|"error"|"warning"|"info", default "warning"
 trackEvent(name, props?);                 // coarse usage counter — no PII in props
 setUser(id | null);                       // opaque id ONLY — never an email/name
 setContext(context | null);               // merged into every subsequent event
 flush();                                   // force-send the queue now (rarely needed — auto-flushes)
 ```
+
+Warnings share the errors table server-side (a `severity` column), so
+`captureMessage` calls group and aggregate exactly like errors. While
+instrumenting, add it to warning-worthy paths: recoverable failures,
+degraded API responses, deprecated feature usage. Keep messages as stable
+templates (numbers are normalised out server-side) and PII-free.
 
 `props`/`context` values must be primitives or small objects — never pass
 emails, form fields, cookies, or request/response bodies through

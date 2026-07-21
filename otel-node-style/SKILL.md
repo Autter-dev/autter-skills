@@ -72,6 +72,29 @@ Uncaught exceptions and unhandled rejections that crash the process are
 captured automatically via `process.on("uncaughtExceptionMonitor", ...)` —
 no extra code needed, this is wired inside `initAutterServer`.
 
+### Capturing warnings (not just errors)
+
+Autter stores warnings/info in the same table as errors with a `severity`
+column, so they group and aggregate identically. When you see meaningful
+warning-worthy moments in the code — deprecated code paths, degraded
+dependencies, recoverable failures, suspicious slowness — wire them up
+with `captureMessage`:
+
+```js
+const { captureMessage } = require("@autter/runtime-node");
+
+captureMessage("Legacy /orders lookup used", "warning", { client: req.get("x-client-id") });
+// severity: "fatal" | "error" | "warning" | "info" (default "warning")
+```
+
+Good places to add these while instrumenting: existing `console.warn` /
+`logger.warn` call sites with real diagnostic value (add `captureMessage`
+alongside them — don't remove the log), deprecation branches, retry/
+fallback paths, and catch blocks that swallow errors. Prefer stable
+message templates ("cache degraded to 40%" is fine — numbers are
+normalised out server-side) and never put PII in the message or
+attributes.
+
 ### Graceful shutdown
 
 ```js

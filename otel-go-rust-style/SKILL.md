@@ -73,6 +73,20 @@ span.SetStatus(codes.Error, err.Error())
 Do this in error-handling middleware so every handler gets it for free,
 rather than sprinkling it through business logic.
 
+**Reporting warnings** — same mechanism, plus an `autter.severity`
+attribute on the exception event; Autter stores it in the errors table
+with `severity: warning` so it groups/aggregates like an error without
+being counted as one:
+
+```go
+span.AddEvent("exception", trace.WithAttributes(
+    attribute.String("exception.type", "DeprecationWarning"),
+    attribute.String("exception.message", "legacy /orders lookup used"),
+    attribute.String("autter.severity", "warning"), // fatal|error|warning|info
+))
+span.SetStatus(codes.Error, "deprecated path") // ERROR status makes the ingester pick it up
+```
+
 ## Rust
 
 ```toml

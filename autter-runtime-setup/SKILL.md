@@ -74,6 +74,16 @@ when a style skill exists for the stack — it encodes Autter-specific
 defaults (sampling, error capture, the relay pattern) that generic
 knowledge won't have.
 
+**Errors AND warnings.** Autter stores warnings/info alongside errors
+(same table, `severity` column) so they aggregate identically later. While
+wiring a service, also instrument its warning-worthy paths — deprecated
+code paths, retry/fallback branches, catch blocks that swallow errors,
+`logger.warn` calls with real diagnostic value — using that stack's
+warning mechanism from the style skill (`captureMessage` in the JS
+packages, the `autter.severity` attribute in raw OTel stacks). Ask the
+user before adding more than a handful; a few high-signal warnings beat
+blanketing every log line.
+
 ## Step 3: Prefer the relay pattern when a service has both a frontend and a backend
 
 If a service pair shares an origin (a backend serving or fronting its own
