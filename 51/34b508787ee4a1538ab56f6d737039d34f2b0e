@@ -1,0 +1,57 @@
+autter-cli-setup/SKILL.md
+  s_2963cb765012f7::t_0332d2c37581aa 1-153
+README.md
+  s_2963cb765012f7::t_32aba54cedcadb 3-8,20-28,36-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "autter_version": "development:1.6.7",
+  "base_commit_sha": "5134b508787ee4a1538ab56f6d737039d34f2b0e",
+  "branch": "main",
+  "prompts": {
+    "s_2963cb765012f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019ff023-4396-740c-95fc-eeec0b618cd8",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:3a6f8ba219a90bffd5b936e05952df9197e71021810e28117651618f57eb0485",
+      "total_additions": 170,
+      "total_deletions": 8,
+      "accepted_lines": 170,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_2963cb765012f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "019ff023-4396-740c-95fc-eeec0b618cd8",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:3a6f8ba219a90bffd5b936e05952df9197e71021810e28117651618f57eb0485",
+      "stats": {
+        "total_additions": 170,
+        "total_deletions": 8,
+        "accepted_lines": 170,
+        "overriden_lines": 0,
+        "files": {
+          "README.md": {
+            "total_additions": 17,
+            "total_deletions": 8,
+            "accepted_lines": 17,
+            "overriden_lines": 0
+          },
+          "autter-cli-setup/SKILL.md": {
+            "total_additions": 153,
+            "total_deletions": 0,
+            "accepted_lines": 153,
+            "overriden_lines": 0
+          }
+        }
+      }
+    }
+  }
+}
