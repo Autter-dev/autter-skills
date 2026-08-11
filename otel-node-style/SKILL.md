@@ -95,6 +95,32 @@ message templates ("cache degraded to 40%" is fine — numbers are
 normalised out server-side) and never put PII in the message or
 attributes.
 
+### Instrumenting slow processes (jobs, consumers, crons)
+
+Autter's dashboard includes a **slow-process monitor**: it flags any
+process that is both slow and repeating a lot, runs an automated
+optimization analysis on the slowest traces, and can open a fix PR. HTTP
+routes are covered automatically (request metrics are unsampled). Non-HTTP
+work is only visible where a span exists — and regular traces are 1%
+head-sampled — so wrap named units of work in `withProcessSpan`, which is
+**always recorded**:
+
+```js
+const { withProcessSpan } = require("@autter/runtime-node");
+
+// queue consumer, cron tick, batch job, DB-heavy call…
+await withProcessSpan("invoice.rebuild", async () => {
+  await rebuildInvoices();
+});
+```
+
+Errors thrown inside are rethrown (and mark the span failed). Nested HTTP/
+DB calls become children of the span, so a slow run shows where the time
+went. Use stable, low-cardinality names (`"email.digest"`, not
+`"email.digest:user-123"` — put ids in attributes). Instrument the repo's
+background jobs, queue consumers, and scheduled tasks this way while
+wiring the service; ask before instrumenting more than the obvious ones.
+
 ### Graceful shutdown
 
 ```js

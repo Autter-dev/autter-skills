@@ -109,6 +109,19 @@ current sample rate — for most services 1% sampling still surfaces errors
 adequately once traffic is non-trivial, since errors correlate with a
 particular request shape that recurs.
 
+## Step 6: Instrumenting slow processes
+
+Autter's dashboard flags processes that are slow AND repeating a lot
+(performance incidents with an automated optimization analysis and, when
+safe, an automated fix PR). HTTP routes are covered automatically via
+unsampled request metrics; non-HTTP work — background jobs, queue
+consumers, cron ticks — is only visible where a span exists. Wrap each
+recurring unit of work in a span named after the job using that
+language's OTel API. At a 1% ratio sampler these spans would mostly be
+dropped — give job spans an always-on tracer (the same separate-provider
+pattern from Step 5) or accept that their counts are a lower bound. Use
+stable, low-cardinality span names; ids go in attributes.
+
 ## Verify
 
 1. Set the env vars (or explicit config) with the real
