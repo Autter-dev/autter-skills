@@ -1,8 +1,11 @@
 # Autter Skills
 
-AI agent skills that install [Autter Runtime](https://github.com/Autter-dev/autter-runtime)
-— open-source error tracking and usage telemetry — into any codebase,
-regardless of language or framework.
+AI agent skills that set up [Autter](https://autter.dev) for you — install
+the [Autter CLI](https://github.com/Autter-dev/autter-cli) (AI authorship
+tracking for Git) on your machine, and wire
+[Autter Runtime](https://github.com/Autter-dev/autter-runtime) — open-source
+error tracking and usage telemetry — into any codebase, regardless of
+language or framework.
 
 Drop these into Claude Code, Cursor, Codex, or any editor that supports the
 [Agent Skills standard](https://agentskills.io) and start using them
@@ -14,10 +17,15 @@ immediately.
 npx skills add Autter-dev/autter-skills --all
 ```
 
-Then tell your agent: **"use the skills to install Autter Runtime in this
-project."** It runs `autter-runtime-setup`, which inventories your repo and
-routes each service to the right style skill automatically — you don't need
-to pick one yourself.
+Then tell your agent what you want:
+
+- **"use the skills to install the Autter CLI"** — runs `autter-cli-setup`,
+  which installs the CLI, verifies PATH and editor hooks, and finishes
+  onboarding (including the known install-noise pitfalls).
+- **"use the skills to install Autter Runtime in this project."** — runs
+  `autter-runtime-setup`, which inventories your repo and routes each
+  service to the right style skill automatically — you don't need to pick
+  one yourself.
 
 Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-style`
 
@@ -25,7 +33,8 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 
 | Skill | Covers |
 | --- | --- |
-| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories the repo, gets an ingest key, routes each service to the right style skill below, verifies telemetry actually arrives. |
+| [`autter-cli-setup`](./autter-cli-setup/) | Installs the Autter CLI on the user's machine: download, PATH, IDE/agent hooks, local vs connected onboarding, troubleshooting. |
+| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here for telemetry.** Inventories the repo, gets an ingest key, routes each service to the right style skill below, verifies telemetry actually arrives. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`. |
 | [`otel-python-style`](./otel-python-style/) | FastAPI, Flask, Django, plain WSGI/ASGI, via the standard OpenTelemetry Python SDK. |
