@@ -84,6 +84,18 @@ packages, the `autter.severity` attribute in raw OTel stacks). Ask the
 user before adding more than a handful; a few high-signal warnings beat
 blanketing every log line.
 
+**Slow processes.** Autter's dashboard continuously watches the telemetry
+for processes that are slow AND repeating a lot (the slow-process
+monitor): they surface as **performance incidents**, get an automated
+optimization analysis of their slowest traces, and — when a safe
+optimization exists — an automated fix PR. HTTP routes are covered out of
+the box via unsampled request metrics. Non-HTTP work (background jobs,
+queue consumers, cron ticks) is only visible where a span exists, so
+while wiring a service also wrap its recurring units of work in spans —
+`withProcessSpan` in the Node packages (always recorded), a manual span
+around the job body in raw OTel stacks (see each style skill). Use
+stable, low-cardinality span names; ids go in attributes.
+
 ## Step 3: Prefer the relay pattern when a service has both a frontend and a backend
 
 If a service pair shares an origin (a backend serving or fronting its own
@@ -137,6 +149,11 @@ Tell the user, concisely:
   yet).
 - That errors show up as issues in the Autter dashboard once real traffic
   hits an instrumented path — usage metrics follow ~60s later.
+- That recurring slow processes (slow routes, slow instrumented jobs) are
+  flagged automatically as performance incidents under **Runtime →
+  Incidents**, with an automated optimization analysis and, when a safe
+  optimization exists, an automated fix PR — no extra setup beyond the
+  instrumentation just added.
 
 ## Hard rules
 

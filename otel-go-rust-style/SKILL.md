@@ -143,6 +143,21 @@ span.record_exception(&err);
 span.set_status(opentelemetry::trace::Status::error(err.to_string()));
 ```
 
+## Instrumenting slow processes (both languages)
+
+Autter's dashboard flags processes that are slow AND repeating a lot
+(performance incidents with an automated optimization analysis and, when
+safe, an automated fix PR). HTTP routes are covered automatically via
+unsampled request metrics; non-HTTP work — background jobs, queue
+consumers, cron ticks — is only visible where a span exists. Wrap each
+recurring unit of work in a span named after the job (Go:
+`tracer.Start(ctx, "invoice.rebuild")` around the job body; Rust: a
+`tracing` span bridged via `tracing-opentelemetry`). At the default 1%
+ratio sampler these spans would mostly be dropped — give job spans an
+always-on tracer provider (same pattern as the error path) or accept that
+counts are a lower bound. Stable, low-cardinality names; ids go in
+attributes.
+
 ## Verify (both languages)
 
 1. Build and run the service with the exporter configured and the real

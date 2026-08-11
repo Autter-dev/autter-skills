@@ -134,6 +134,26 @@ downgrades it to a warning in storage.) Keep messages as stable templates
 — ids and numbers are normalised out server-side for grouping — and never
 include PII.
 
+## Instrumenting slow processes (jobs, consumers, crons)
+
+Autter's dashboard flags processes that are slow AND repeating a lot
+(performance incidents with an automated optimization analysis and, when
+safe, an automated fix PR). HTTP routes are covered automatically via
+unsampled request metrics; non-HTTP work is only visible where a span
+exists. Wrap recurring units of work — Celery tasks, cron jobs, queue
+consumers, batch scripts — in a span named after the job:
+
+```python
+with tracer.start_as_current_span("invoice.rebuild"):
+    rebuild_invoices()
+```
+
+At the default 1% ratio sampler these job spans would mostly be dropped —
+route them through an always-on tracer (a separate `TracerProvider` with
+an `ALWAYS_ON` sampler, same pattern the error path uses) or accept that
+counts are a lower bound. Use stable, low-cardinality span names; put ids
+in attributes.
+
 ## Verify
 
 1. Start the app (with `opentelemetry-instrument` or explicit init).
