@@ -1,0 +1,95 @@
+README.md
+  s_2d9aca70da7cf6::t_9c9b74711ab9bf 3
+  s_2d9aca70da7cf6::t_644e98e5372e0f 31
+  s_2d9aca70da7cf6::t_4c95a4f12f1bf0 69-73
+otel-browser-style/SKILL.md
+  s_2d9aca70da7cf6::t_d6f41e5fd9295a 36-43
+otel-node-style/SKILL.md
+  s_2d9aca70da7cf6::t_cf99b19c2021d5 132-139
+  s_2d9aca70da7cf6::t_56c69c4581c968 218-221
+  s_2d9aca70da7cf6::t_6a66d445d0c636 14-17
+otel-generic-style/SKILL.md
+  s_2d9aca70da7cf6::t_bf3b8f6ebd5613 68-70
+autter-runtime-setup/SKILL.md
+  s_2d9aca70da7cf6::t_faa7f35f385292 120-129
+  s_2d9aca70da7cf6::t_0b2fe607ad57c0 165-166,169-176
+  s_2d9aca70da7cf6::t_41abb821c15c06 139-141
+  s_2d9aca70da7cf6::t_38d868a32f6c02 81-86
+  s_2d9aca70da7cf6::t_88a501bd21b3f3 20-22,25,27-30,35-44,47-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "autter_version": "development:1.6.7",
+  "base_commit_sha": "b8697bbf9df675e03f8bb65e5c22c2668e7a1f4f",
+  "branch": "main",
+  "prompts": {
+    "s_2d9aca70da7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a004e0-d67c-7787-b3ce-d60e3c5a5d58",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:427ef9e5576433c24d89bdcde949382e939372862406fde12fba930d1540c914",
+      "total_additions": 86,
+      "total_deletions": 190,
+      "accepted_lines": 86,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_2d9aca70da7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a004e0-d67c-7787-b3ce-d60e3c5a5d58",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:427ef9e5576433c24d89bdcde949382e939372862406fde12fba930d1540c914",
+      "stats": {
+        "total_additions": 86,
+        "total_deletions": 190,
+        "accepted_lines": 86,
+        "overriden_lines": 0,
+        "files": {
+          "README.md": {
+            "total_additions": 7,
+            "total_deletions": 8,
+            "accepted_lines": 7,
+            "overriden_lines": 0
+          },
+          "autter-cli-setup/SKILL.md": {
+            "total_additions": 0,
+            "total_deletions": 153,
+            "accepted_lines": 0,
+            "overriden_lines": 0
+          },
+          "autter-runtime-setup/SKILL.md": {
+            "total_additions": 52,
+            "total_deletions": 20,
+            "accepted_lines": 52,
+            "overriden_lines": 0
+          },
+          "otel-browser-style/SKILL.md": {
+            "total_additions": 8,
+            "total_deletions": 4,
+            "accepted_lines": 8,
+            "overriden_lines": 0
+          },
+          "otel-generic-style/SKILL.md": {
+            "total_additions": 3,
+            "total_deletions": 2,
+            "accepted_lines": 3,
+            "overriden_lines": 0
+          },
+          "otel-node-style/SKILL.md": {
+            "total_additions": 16,
+            "total_deletions": 3,
+            "accepted_lines": 16,
+            "overriden_lines": 0
+          }
+        }
+      }
+    }
+  }
+}
