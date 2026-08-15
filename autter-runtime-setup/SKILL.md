@@ -1,8 +1,8 @@
 ---
 name: autter-runtime-setup
-version: 1.0.0
-description: Install Autter Runtime (open-source error + usage telemetry) into a codebase, regardless of language or framework. Run this first — it inventories the repo and routes to the right style skill for each service.
-tags: [autter, telemetry, observability, opentelemetry, otlp, setup, onboarding]
+version: 1.1.0
+description: Install Autter Runtime (open-source error + usage + LLM telemetry) into a codebase, regardless of language or framework. Run this first — it inventories the repo and routes to the right style skill for each service.
+tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding]
 author: autter
 ---
 
@@ -57,12 +57,17 @@ simply won't send until it's filled in.
 
 List every deployable unit you find — backend services, frontend apps,
 workers, mobile apps, edge/serverless functions. For a monorepo, check each
-workspace/package separately. Show the user the list before proceeding,
-e.g.:
+workspace/package separately. While inventorying, also note which services
+**call LLM APIs** — dependencies like `ai` (Vercel AI SDK), `openai`,
+`@anthropic-ai/sdk`, `@google/genai`, `langchain`, Python's
+`openai`/`anthropic`/`litellm`/`google-genai`, Go's `openai-go`, Bedrock
+SDKs, or raw HTTP calls to provider endpoints — those services get LLM
+tracing wired alongside errors/usage. Show the user the list before
+proceeding, e.g.:
 
-> Found: `apps/api` (Node/Express), `apps/web` (Next.js), `worker/`
-> (Python/Celery). I'll wire up all three — let me know if you want to skip
-> any.
+> Found: `apps/api` (Node/Express, calls OpenAI), `apps/web` (Next.js),
+> `worker/` (Python/Celery). I'll wire up all three — including LLM
+> tracing for `apps/api` — let me know if you want to skip any.
 
 ## Step 2: Detect stack and load the matching style skill
 
@@ -99,6 +104,19 @@ warning mechanism from the style skill (`captureMessage` in the JS
 packages, the `autter.severity` attribute in raw OTel stacks). Ask the
 user before adding more than a handful; a few high-signal warnings beat
 blanketing every log line.
+
+**LLM calls.** Autter records every LLM/GenAI call with model, tokens,
+latency, and a USD cost — then watches for spend spikes, failing models,
+and budget breaches (they open incidents under **Runtime → LLM**). LLM
+spans are exempt from trace sampling: 1% of model calls is useless for
+cost tracking, so they ride an always-recorded path. For each service the
+inventory flagged as calling LLM APIs, follow the style skill's **LLM
+calls** section while wiring it: the Node packages initialise the LLM
+tracer automatically inside `initAutterServer` (turn on Vercel AI SDK
+telemetry per call, or wrap other clients in `withLlmCall`); raw-OTel
+stacks emit `gen_ai.*` spans with a sampling exemption. Never put prompts,
+completions, or PII in span attributes — model ids, token counts, and
+opaque user ids only.
 
 **Slow processes.** Autter's dashboard continuously watches the telemetry
 for processes that are slow AND repeating a lot (the slow-process
@@ -194,15 +212,23 @@ curl -s -X POST https://otlp.autter.dev/v1/browser \
 Each style skill has a **Selftest path** section: a temporary, clearly
 named test hook (route `/__autter-selftest`, span `autter.selftest`,
 message "autter selftest" at severity `info`, browser event
-`autter_selftest`) that exercises both pipelines in one shot. Add it,
+`autter_selftest`) that exercises the pipelines in one shot. Add it,
 start the service locally (or ask the user to), trigger it once, and
-confirm **both** signals per the style skill's Verify steps:
+confirm **every applicable signal** per the style skill's Verify steps:
 
 1. **Observability**: a `/v1/traces` export succeeded carrying the
    selftest span and the info-severity message occurrence.
 2. **Metrics**: a `/v1/metrics` export succeeded (server stacks — the
    selftest request itself feeds the HTTP duration instrument), or the
    browser payload came back `202` (browser apps).
+3. **LLM traces** (services wired for LLM tracing): one fake test call —
+   provider/model `autter-selftest`, 1 input + 1 output token, cost 0, no
+   real model invoked — proves gen_ai spans reach the ingester. The Node
+   packages ship this as `emitLlmSelftestTrace()` (it force-flushes and
+   returns the `traceId` to look up); raw-OTel stacks emit the equivalent
+   span per their style skill. Confirm the call appears under **Runtime →
+   LLM** (or a `runtime_llm_calls` row when self-hosting) before trusting
+   that real model calls will be tracked.
 
 Two things the style skills handle that you shouldn't improvise around:
 
@@ -223,9 +249,10 @@ alone: without it, usage stats fall back to 1%-sampled trace rollups and
 the slow-process monitor loses accurate HTTP coverage for that service.
 
 Final ground truth is the dashboard: the service shows an
-`autter.selftest` span, one info-severity "autter selftest" issue, and
-(server stacks) request metrics for the selftest route within ~1–2
-minutes. Everything the selftest created is greppable
+`autter.selftest` span, one info-severity "autter selftest" issue,
+(server stacks) request metrics for the selftest route, and (LLM-wired
+services) one `autter-selftest` LLM call within ~1–2 minutes. Everything
+the selftest created is greppable
 (`autter-selftest` / `autter.selftest` / `autter_selftest`) and groups
 under that one clearly named issue, which the user can resolve or ignore.
 
@@ -249,6 +276,11 @@ Tell the user, concisely:
   yet).
 - That errors show up as issues in the Autter dashboard once real traffic
   hits an instrumented path — usage metrics follow ~60s later.
+- Which services got LLM tracing, and how their calls are emitted (Vercel
+  AI SDK telemetry flag, `withLlmCall`, or raw `gen_ai.*` spans) — every
+  model call lands under **Runtime → LLM** with tokens and cost, watched
+  automatically for spend spikes, failing models, and budget breaches. If
+  an LLM-calling service was left unwired, say so explicitly.
 - That recurring slow processes (slow routes, slow instrumented jobs) are
   flagged automatically as performance incidents under **Runtime →
   Incidents**, with an automated optimization analysis and, when a safe

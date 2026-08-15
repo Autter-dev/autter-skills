@@ -2,8 +2,8 @@
 
 AI agent skills that set up [Autter](https://autter.dev) for you — wire
 [Autter Runtime](https://github.com/Autter-dev/autter-runtime) — open-source
-error tracking and usage telemetry — into any codebase, regardless of
-language or framework.
+error tracking, usage telemetry, and LLM tracing — into any codebase,
+regardless of language or framework.
 
 Drop these into Claude Code, Cursor, Codex, or any editor that supports the
 [Agent Skills standard](https://agentskills.io) and start using them
@@ -28,7 +28,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 
 | Skill | Covers |
 | --- | --- |
-| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories the repo, gets an ingest key set up, routes each service to the right style skill below, then verifies with a key preflight plus a temporary selftest path that proves both pipelines — traces/errors **and** metrics — per service. |
+| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories the repo (including which services call LLM APIs), gets an ingest key set up, routes each service to the right style skill below, then verifies with a key preflight plus a temporary selftest path that proves every wired pipeline — traces/errors, metrics, **and** (where wired) a fake LLM test trace — per service. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`. |
 | [`otel-python-style`](./otel-python-style/) | FastAPI, Flask, Django, plain WSGI/ASGI, via the standard OpenTelemetry Python SDK. |

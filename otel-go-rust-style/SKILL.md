@@ -1,8 +1,8 @@
 ---
 name: otel-go-rust-style
-version: 1.0.0
-description: How to wire Autter Runtime into Go and Rust backends using each language's official OpenTelemetry SDK — no Autter-specific package needed.
-tags: [autter, telemetry, go, rust, opentelemetry]
+version: 1.1.0
+description: How to wire Autter Runtime into Go and Rust backends using each language's official OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
+tags: [autter, telemetry, go, rust, opentelemetry, llm]
 author: autter
 ---
 
@@ -216,6 +216,52 @@ always-on tracer provider (same pattern as the error path) or accept that
 counts are a lower bound. Stable, low-cardinality names; ids go in
 attributes.
 
+## LLM calls (both languages)
+
+Autter recognises spans following the OTel GenAI semconv (`gen_ai.*`
+attributes) automatically and records each as an LLM call — model, tokens,
+latency, USD cost (estimated ingest-side unless the span reports
+`autter.llm.cost_usd`). If the service calls LLM APIs (openai-go,
+anthropic SDKs, Bedrock, raw HTTP), wrap each model call in a client span
+with the semconv attributes. Go shown; Rust mirrors it with the
+`opentelemetry` span API or a `tracing` span whose fields map through
+`tracing-opentelemetry`:
+
+```go
+ctx, span := tracer.Start(ctx, "chat gpt-5-mini",
+    trace.WithSpanKind(trace.SpanKindClient),
+    trace.WithAttributes(
+        attribute.String("gen_ai.operation.name", "chat"),
+        attribute.String("gen_ai.system", "openai"),
+        attribute.String("gen_ai.request.model", "gpt-5-mini"),
+        attribute.String("autter.user_id", userID), // opaque — never an email
+    ))
+out, err := client.Chat.Completions.New(ctx, params)
+if err != nil {
+    span.RecordError(err)
+    span.SetStatus(codes.Error, err.Error())
+} else {
+    span.SetAttributes(
+        attribute.Int64("gen_ai.usage.input_tokens", out.Usage.PromptTokens),
+        attribute.Int64("gen_ai.usage.output_tokens", out.Usage.CompletionTokens),
+    )
+}
+span.End()
+```
+
+Never put prompts, completions, or PII in attributes — model ids, token
+counts, and opaque user ids only.
+
+**Sampling exemption — required.** At the 1% ratio sampler, 99% of LLM
+spans are dropped and cost numbers become garbage. Either emit LLM spans
+from a tracer built on a separate **always-on** provider pointed at the
+same exporter (the pattern the slow-process section already uses), or
+wrap the root sampler with one that returns "record and sample" whenever
+the span name starts with `chat `/`embeddings `/`gen_ai.` or the creation
+attributes contain a `gen_ai.*` key, delegating everything else
+(implement `sdktrace.Sampler` in Go / `ShouldSample` in Rust — Autter's
+Node package does exactly this internally).
+
 ## Selftest path (temporary — delete after verification)
 
 A throwaway route that proves both pipelines in one hit — add, verify,
@@ -233,9 +279,26 @@ mux.HandleFunc("/__autter-selftest", func(w http.ResponseWriter, r *http.Request
     ))
     span.SetStatus(codes.Error, "autter selftest")
     span.End()
+
+    // LLM selftest — only when the service is wired for LLM tracing: one
+    // fake call (no real model touched) proves gen_ai spans land.
+    _, llmSpan := otel.Tracer("autter-selftest").Start(r.Context(), "chat autter-selftest",
+        trace.WithSpanKind(trace.SpanKindClient),
+        trace.WithAttributes(
+            attribute.String("gen_ai.operation.name", "chat"),
+            attribute.String("gen_ai.system", "autter-selftest"),
+            attribute.String("gen_ai.request.model", "autter-selftest"),
+            attribute.Int64("gen_ai.usage.input_tokens", 1),
+            attribute.Int64("gen_ai.usage.output_tokens", 1),
+            attribute.Float64("autter.llm.cost_usd", 0),
+            attribute.Bool("autter.selftest", true),
+        ))
+    llmTraceID := llmSpan.SpanContext().TraceID().String()
+    llmSpan.End()
+
     tp.ForceFlush(r.Context()) // the TracerProvider from initObservability
     mp.ForceFlush(r.Context()) // the MeterProvider, if wired
-    w.Write([]byte(`{"ok":true}`))
+    w.Write([]byte(`{"ok":true,"llmTraceId":"` + llmTraceID + `"}`))
 })
 ```
 
@@ -266,7 +329,13 @@ Rust) and revert it together with the route.
    is wired — request metrics for `/__autter-selftest`. Traces arriving
    without metrics means no meter provider: either wire it (section
    above) or tell the user usage stats are trace-derived at 1%.
-5. Trigger one real error path too and confirm
+5. LLM-wired services: the returned `llmTraceId` call appears under
+   **Runtime → LLM** as provider/model `autter-selftest` (self-hosted: a
+   `runtime_llm_calls` row). Remember the selftest ran with sampling at
+   100% — real LLM calls only survive the default 1% run with the
+   exemption from the LLM section in place; double-check it before
+   trusting this signal.
+6. Trigger one real error path too and confirm
    `RecordError`/`record_exception` was called on that span — the
    selftest proves transport, not your error-handler wiring.
-6. Delete the selftest route and revert the sampling override.
+7. Delete the selftest route and revert the sampling override.
