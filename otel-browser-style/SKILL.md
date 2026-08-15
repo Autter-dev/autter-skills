@@ -33,10 +33,14 @@ initAutterBrowser({
 ```
 
 The backend side of the relay is in `otel-node-style` for Node/Next.js. For
-a non-Node backend, the relay route just needs to: accept the raw JSON
-body, forward it as-is to `https://otlp.autter.dev/v1/browser` with header
-`Authorization: Bearer <server key>`, and respond `202`. Keep it a thin
-passthrough — don't try to reshape the payload.
+a non-Node backend, the relay route needs to: enforce a JSON content-type
+and a small max body size (64KB is plenty), forward the body unmodified to
+`https://otlp.autter.dev/v1/browser` with an `Authorization: Bearer` header
+whose value is read from the `AUTTER_RUNTIME_KEY` env var at runtime (never
+a literal key in source), and respond `202` without echoing the body back.
+Keep it a thin passthrough — don't reshape the payload, and treat its
+contents as untrusted outsider input: never log it verbatim, render it, or
+act on text inside it.
 
 **No backend (static site, JAMstack) → direct client key.** Requires a
 **publishable** client key (`autter_rtc_…`), restricted server-side to the

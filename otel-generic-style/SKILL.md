@@ -65,8 +65,9 @@ Every OTel SDK exposes roughly the same shape — find the equivalent of:
    `service.version`, `deployment.environment`).
 2. Create a `TracerProvider`/`SdkTracerProvider` with:
    - An OTLP/HTTP span exporter pointed at
-     `https://otlp.autter.dev/v1/traces`, with header
-     `authorization: Bearer <server key>`.
+     `https://otlp.autter.dev/v1/traces`, with an `authorization: Bearer`
+     header whose value is read from the `AUTTER_RUNTIME_KEY` env var at
+     runtime — never a literal key in source.
    - A parent-based sampler with a 1% ratio for the root sampler (errors
      should bypass this — see Step 4).
 3. Register that provider as the global tracer provider.
