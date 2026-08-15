@@ -136,6 +136,22 @@ service's LLM calls *emit* those spans. Check for LLM usage (deps: `ai`,
 `openai`, `@anthropic-ai/sdk`, `@google/genai`, `langchain`, raw fetches
 to provider APIs) and wire whichever applies:
 
+**Provider SDK clients** (openai, @anthropic-ai/sdk, @google/genai) — wrap
+the client **once where it's constructed**; every call through it is then
+traced automatically, streaming included. Prefer this over per-call
+wrapping:
+
+```js
+const { instrumentLlmClient } = require("@autter/runtime-node");
+
+const openai = instrumentLlmClient(new OpenAI(), { userId: () => currentUserId() });
+// then use it exactly as before — no other changes anywhere
+```
+
+Provider is auto-detected; pass `{ provider: "..." }` for self-hosted
+gateways. OpenAI streams only report usage when the call sets
+`stream_options: { include_usage: true }` — add that where streams matter.
+
 **Vercel AI SDK** (`ai` package) — enable its telemetry on each call, and
 pass an opaque user id when one is in scope:
 
@@ -147,7 +163,7 @@ const { text } = await generateText({
 });
 ```
 
-**Any other client** (openai/anthropic SDKs, raw fetch) — wrap the call:
+**Raw fetch / anything else** — wrap the call manually:
 
 ```js
 const { withLlmCall } = require("@autter/runtime-node");
@@ -155,11 +171,8 @@ const { withLlmCall } = require("@autter/runtime-node");
 const res = await withLlmCall(
   { provider: "openai", model: "gpt-5-mini", userId: user.id },
   async (llm) => {
-    const out = await openai.chat.completions.create({ /* … */ });
-    llm.setUsage({
-      inputTokens: out.usage?.prompt_tokens,
-      outputTokens: out.usage?.completion_tokens,
-    });
+    const out = await callTheModelSomehow();
+    llm.setUsage({ inputTokens: ..., outputTokens: ... });
     return out;
   },
 );
@@ -170,10 +183,15 @@ surface both as error issues and as failed LLM calls. Costs are estimated
 ingest-side from a built-in price table; when the app already computes
 exact spend, report it with `llm.setCost(usd)`. Never put prompts,
 completions, or PII in attributes — model ids, token counts, and opaque
-user ids only. Wrap every model call site you find (there are usually
-few); ask before restructuring anything unusual (streaming helpers,
-custom gateways). Opt out entirely with `llmTracing: false` if the user
-asks.
+user ids only. Instrument every client construction site you find (there
+are usually one or two); ask before restructuring anything unusual
+(streaming helpers, custom gateways). Opt out entirely with
+`llmTracing: false` if the user asks.
+
+Once flowing, the Autter dashboard watches these calls automatically:
+spend spikes, failing models, slow responses, and unusually expensive
+calls open incidents (with automated fix PRs where a safe change exists),
+and a daily LLM digest lands in the org's notifications — no extra setup.
 
 ### Graceful shutdown
 
