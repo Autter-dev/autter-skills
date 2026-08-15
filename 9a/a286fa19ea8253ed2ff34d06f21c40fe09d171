@@ -1,0 +1,50 @@
+otel-node-style/SKILL.md
+  s_493feb443518cc::t_93c5ecc0cf710d 139-154,166,174-175
+  s_493feb443518cc::t_1cdee7546cbd0c 186-194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "autter_version": "development:1.6.7",
+  "base_commit_sha": "9aa286fa19ea8253ed2ff34d06f21c40fe09d171",
+  "branch": "posthog/llm-tracing-skills",
+  "prompts": {
+    "s_493feb443518cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a005ea-a5cd-77ca-942e-ed93589fdcbe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:9325cd91e899be75a10f23907626117b45f0947d3a7aa416c5e6847b0462ca8f",
+      "total_additions": 28,
+      "total_deletions": 10,
+      "accepted_lines": 28,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_493feb443518cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a005ea-a5cd-77ca-942e-ed93589fdcbe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:9325cd91e899be75a10f23907626117b45f0947d3a7aa416c5e6847b0462ca8f",
+      "stats": {
+        "total_additions": 28,
+        "total_deletions": 10,
+        "accepted_lines": 28,
+        "overriden_lines": 0,
+        "files": {
+          "otel-node-style/SKILL.md": {
+            "total_additions": 28,
+            "total_deletions": 10,
+            "accepted_lines": 28,
+            "overriden_lines": 0
+          }
+        }
+      }
+    }
+  }
+}
