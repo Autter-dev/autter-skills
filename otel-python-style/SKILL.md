@@ -51,34 +51,68 @@ This auto-instruments whatever frameworks it detects (FastAPI, Flask,
 requests, urllib, psycopg2, etc.) with zero code changes. Prefer this when
 the user wants the least invasive setup.
 
+Metrics ride along for free on this path: `opentelemetry-instrument`
+also wires a meter provider from the same env vars, and the framework
+instrumentations emit the `http.server.duration` histogram — the one
+instrument Autter folds into unsampled request rollups (and what gives
+the slow-process monitor accurate HTTP coverage).
+
 ## Explicit setup (when the user wants code they can see/modify)
 
 ```python
 # observability.py
-from opentelemetry import trace
+import os
+
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 
 def init_observability(service_name: str, api_key: str):
     resource = Resource.create({"service.name": service_name})
+    headers = {"authorization": f"Bearer {api_key}"}
+
+    # 1% of successful traces. Reading the ratio from the standard env var
+    # lets a verification run force 100% (OTEL_TRACES_SAMPLER_ARG=1)
+    # without touching code.
+    ratio = float(os.environ.get("OTEL_TRACES_SAMPLER_ARG", "0.01"))
     provider = TracerProvider(
         resource=resource,
-        sampler=ParentBased(TraceIdRatioBased(0.01)),  # 1% of successful traces
+        sampler=ParentBased(TraceIdRatioBased(ratio)),
     )
-    exporter = OTLPSpanExporter(
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
         endpoint="https://otlp.autter.dev/v1/traces",
-        headers={"authorization": f"Bearer {api_key}"},
-    )
-    provider.add_span_processor(BatchSpanProcessor(exporter))
+        headers=headers,
+    )))
     trace.set_tracer_provider(provider)
+
+    # Metrics are not optional: the framework instrumentors only emit the
+    # http.server.duration histogram — what feeds Autter's unsampled
+    # request rollups and slow-process monitor — once a meter provider is
+    # registered. Without this block, usage stats degrade to 1%-sampled
+    # trace rollups.
+    metrics.set_meter_provider(MeterProvider(
+        resource=resource,
+        metric_readers=[PeriodicExportingMetricReader(
+            OTLPMetricExporter(
+                endpoint="https://otlp.autter.dev/v1/metrics",
+                headers=headers,
+            ),
+            export_interval_millis=60_000,
+        )],
+    ))
     return provider
 ```
 
 Call `init_observability(...)` once, before the app starts serving traffic
-(top of `main.py` / `app.py`, or in an ASGI lifespan startup hook).
+(top of `main.py` / `app.py`, or in an ASGI lifespan startup hook) — and
+**before** the framework instrumentor runs, since instrumentors bind to
+whatever providers are registered at instrument time.
 
 **FastAPI**: `FastAPIInstrumentor.instrument_app(app)` after creating the
 app — do this instead of hand-writing middleware.
@@ -154,16 +188,62 @@ an `ALWAYS_ON` sampler, same pattern the error path uses) or accept that
 counts are a lower bound. Use stable, low-cardinality span names; put ids
 in attributes.
 
+## Selftest path (temporary — delete after verification)
+
+A throwaway route that proves both pipelines in one hit. Add it, verify,
+delete it — never commit or deploy it.
+
+```python
+# TEMPORARY autter selftest — delete after verification.
+# (FastAPI shown; Flask/Django: same body in their route syntax.)
+@app.get("/__autter-selftest")
+def autter_selftest():
+    from opentelemetry import metrics, trace
+
+    tracer = trace.get_tracer("autter-selftest")
+    with tracer.start_as_current_span("autter.selftest") as span:
+        span.add_event("exception", {
+            "exception.type": "Message",
+            "exception.message": "autter selftest",
+            "autter.severity": "info",
+        })
+        span.set_status(trace.Status(trace.StatusCode.ERROR, "autter selftest"))
+    trace.get_tracer_provider().force_flush()
+    metrics.get_meter_provider().force_flush()
+    return {"ok": True}
+```
+
+The `force_flush()` calls make it deterministic — both exports fire
+before the response returns, no waiting on batch/interval timers. The
+ERROR status sits on the internal child span (that status is what makes
+the ingester store the info-severity occurrence), not on the request
+span, so the route doesn't show up as a failed request in traffic stats.
+
+One catch: the selftest span is a child of the request span, so at the
+default 1% sampling it's usually dropped before export. Force sampling up
+for the verification run only:
+
+```bash
+OTEL_TRACES_SAMPLER_ARG=1 opentelemetry-instrument python app.py
+# explicit setup: init_observability reads the same env var
+```
+
 ## Verify
 
-1. Start the app (with `opentelemetry-instrument` or explicit init).
-2. Hit any HTTP route once, or run any code path that calls
-   `init_observability`.
-3. Within the batch export interval (a few seconds by default), confirm
-   the span reached the ingester — either check ClickHouse/the dashboard,
-   or temporarily set `OTEL_EXPORTER_OTLP_ENDPOINT` to a local debug
-   collector if the user wants to inspect payloads before they leave the
-   machine.
-4. Trigger one real exception and confirm `span.record_exception` fired
-   (wrap it manually per above if the automatic instrumentation doesn't
-   cover that code path, e.g. a background job).
+1. Start the app with `OTEL_TRACES_SAMPLER_ARG=1` set for this run.
+2. `curl` the selftest route once — it returns `{"ok": true}` only after
+   both force-flushes ran.
+3. Check the process output: the OTLP exporters log failed exports
+   (a `401` means the key is missing/wrong; connection errors mean
+   egress to `otlp.autter.dev` is blocked). No export errors means both
+   `/v1/traces` and `/v1/metrics` were accepted.
+4. Ground truth in the dashboard (~1–2 min): an `autter.selftest` span,
+   one info-severity "autter selftest" issue, and request metrics for
+   `/__autter-selftest`. Traces arriving without metrics means the meter
+   provider isn't registered (or the instrumentor ran before
+   `init_observability`) — exactly the gap the selftest exists to catch.
+5. Trigger one real exception too and confirm `span.record_exception`
+   fired (wrap it manually per above if the automatic instrumentation
+   doesn't cover that code path, e.g. a background job) — the selftest
+   proves transport, not your error-handler wiring.
+6. Delete the selftest route and drop the temporary env override.

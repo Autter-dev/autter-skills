@@ -112,14 +112,31 @@ emails, form fields, cookies, or request/response bodies through
 `setUser`/`setContext`/`trackEvent`; the package doesn't scrub these for
 you (it's explicitly zero-dep, no PII redaction layer).
 
+## Selftest (console — nothing to install or clean up)
+
+After init, run this in the devtools console (any page where the tracker
+is loaded) to exercise both event families and force the send:
+
+```js
+captureMessage("autter selftest", "info"); // error/warning pipeline
+trackEvent("autter_selftest");             // usage-metrics pipeline
+flush();                                   // skip the batch window
+```
+
 ## Verify
 
-1. Load the app, open devtools network tab.
-2. Trigger a real error (`throw new Error("test")` somewhere reachable, or
-   call `captureException` directly in the console).
-3. Confirm a request fires to the relay route or `/v1/browser` within
-   ~500ms (errors flush fast — 500ms debounce, not the normal 5s batch
-   window) and comes back `202` (relay) or `202`/`200` (direct).
+1. Load the app, open the devtools network tab, run the selftest above.
+2. Confirm a POST fires to the relay route or `/v1/browser` and comes
+   back `202` — body `{"accepted":N}` from the ingester; a relay replies
+   `202` immediately and forwards in the background.
+3. The selftest proves init + transport, not the automatic hooks — so
+   also trigger one real error (throw inside a component render, or
+   `Promise.reject(new Error("test"))` in the console) and confirm
+   another request fires within ~500ms (errors flush fast — 500ms
+   debounce, not the normal 5s batch window).
 4. Direct-key mode only: a `403` here means the current origin isn't on
    the key's allow-list — check it was registered with the exact origin
    (scheme + host + port) the app is running on.
+5. Ground truth in the dashboard (~1–2 min): one info-severity
+   "autter selftest" issue and a usage counter `event:autter_selftest` —
+   both clearly named; the user can resolve or ignore them.

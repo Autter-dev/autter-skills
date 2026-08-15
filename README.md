@@ -28,7 +28,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 
 | Skill | Covers |
 | --- | --- |
-| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories the repo, gets an ingest key set up, routes each service to the right style skill below, verifies telemetry actually arrives. |
+| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories the repo, gets an ingest key set up, routes each service to the right style skill below, then verifies with a key preflight plus a temporary selftest path that proves both pipelines — traces/errors **and** metrics — per service. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`. |
 | [`otel-python-style`](./otel-python-style/) | FastAPI, Flask, Django, plain WSGI/ASGI, via the standard OpenTelemetry Python SDK. |

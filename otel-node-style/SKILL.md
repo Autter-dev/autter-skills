@@ -233,15 +233,64 @@ errors, so skipping this boundary silently misses them.
 - Default ingester endpoint is `https://otlp.autter.dev` — only override
   `endpoint` if the user is self-hosting the OSS ingester.
 
+## Selftest path (temporary — delete after verification)
+
+To prove both pipelines end-to-end — traces/errors AND metrics — add a
+throwaway route, hit it once, then delete it. Never commit or deploy it;
+it's an unauthenticated endpoint that triggers telemetry sends.
+
+```js
+const { withProcessSpan, captureMessage } = require("@autter/runtime-node");
+
+// TEMPORARY autter selftest — delete after verification.
+app.get("/__autter-selftest", async (_req, res) => {
+  await withProcessSpan("autter.selftest", async () => {
+    captureMessage("autter selftest", "info");
+  });
+  res.json({ ok: true });
+});
+```
+
+Next.js: same body in a temporary `app/api/autter-selftest/route.ts`,
+importing `withProcessSpan` and `captureServerMessage` from
+`@autter/runtime-next` and returning `Response.json({ ok: true })`.
+
+One `curl` of the route exercises everything at once:
+
+- the `autter.selftest` process span and the info message ride the
+  **always-on** error pipe — never sampled out, flushed within ~2s —
+  proving `/v1/traces` and the error/warning path;
+- the request itself is recorded by the HTTP instrumentation's
+  `http.server.duration` histogram — the instrument Autter folds into
+  request rollups — proving `/v1/metrics` on the next export.
+
 ## Verify
 
-1. Start the app with the instrumentation loaded.
-2. Hit any HTTP route once — a 200 from `/v1/traces`/`/v1/metrics` at the
-   next flush interval (up to 60s) confirms auth worked.
-3. Call `captureException(new Error("test"))` once and confirm no error is
-   thrown/logged from the SDK itself (it forwards async and never throws
-   into your app).
+1. Start the app with the instrumentation loaded and
+   **`OTEL_LOG_LEVEL=debug`** set. OTel's diag logger is a no-op by
+   default — without this env var, export failures (bad key, blocked
+   egress) are completely silent.
+2. `curl` the selftest route once. Within ~2–5s the traces export fires;
+   an exporter error in the logs means a `401` (key missing/wrong) or a
+   network problem reaching `otlp.autter.dev`.
+3. Metrics export on a 60s interval — either wait one interval, or stop
+   the app gracefully (SIGTERM with the shutdown hook wired):
+   `shutdown()` force-flushes the metric reader, so the final
+   `/v1/metrics` POST fires immediately. No metrics export at all after a
+   clean shutdown means the metrics pipe isn't wired.
 4. If using the relay, POST a minimal synthetic test payload (never real
    captured telemetry) to the relay route and confirm it returns `202`
    immediately — the relay always responds fast and forwards in the
-   background.
+   background:
+
+   ```bash
+   curl -s -X POST localhost:3000/api/autter-runtime \
+     -H "Content-Type: application/json" \
+     -d "{\"version\":1,\"service\":\"selftest\",\"environment\":\"development\",\"events\":[{\"type\":\"message\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"severity\":\"info\",\"message\":\"autter selftest\"}]}"
+   ```
+
+5. Ground truth in the dashboard (~1–2 min): an `autter.selftest` span,
+   one info-severity "autter selftest" issue, and request metrics for
+   `/__autter-selftest`.
+6. **Delete the selftest route** (and unset `OTEL_LOG_LEVEL`) once both
+   signals are confirmed.

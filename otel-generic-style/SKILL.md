@@ -57,6 +57,16 @@ older SDK versions default to gRPC on port 4317), fall back to
 `/v1/traces` and `/v1/metrics`. Check that specific SDK's docs for the
 protocol env var name if it differs.
 
+Metrics ride the same env vars: SDKs with HTTP-server metric support
+(the Java agent and .NET's AspNetCore instrumentation emit
+`http.server.request.duration` out of the box) export to `/v1/metrics`
+automatically. That histogram — or the older `http.server.duration` — is
+the only instrument Autter folds into request rollups, and it's what
+gives the slow-process monitor unsampled HTTP coverage; custom
+instruments are accepted with a `200` but not stored. If the ecosystem's
+instrumentation doesn't emit it, say so to the user — their usage stats
+will be trace-derived (1%-sampled) instead.
+
 ## Step 3: If the SDK needs explicit code instead of env vars
 
 Every OTel SDK exposes roughly the same shape — find the equivalent of:
@@ -123,13 +133,43 @@ dropped — give job spans an always-on tracer (the same separate-provider
 pattern from Step 5) or accept that their counts are a lower bound. Use
 stable, low-cardinality span names; ids go in attributes.
 
+## Step 7: Selftest path (temporary — delete after verification)
+
+Add a throwaway route — `/__autter-selftest` — that, using that
+language's OTel API: starts a child span named `autter.selftest`, adds an
+exception event on it (`exception.type: "Message"`, `exception.message:
+"autter selftest"`, `autter.severity: "info"`), sets the span status to
+ERROR (that status is what makes the ingester store the occurrence; on
+the internal child span it doesn't mark the request as failed), ends it,
+and — if the SDK exposes it — force-flushes the tracer and meter
+providers before responding. Hitting the route also feeds the HTTP
+duration histogram, so one request exercises both pipelines. Never
+commit or deploy the route; it's unauthenticated and triggers telemetry
+sends.
+
 ## Verify
 
-1. Set the env vars (or explicit config) with the real
-   `AUTTER_RUNTIME_KEY`.
-2. Start the service and hit any instrumented path once.
+1. Run the service with the real `AUTTER_RUNTIME_KEY` and these
+   verification overrides — standard OTel spec env vars, so they work
+   across SDKs; unset them afterwards:
+
+   ```bash
+   OTEL_TRACES_SAMPLER=parentbased_always_on   # beat the 1% sampling
+   OTEL_METRIC_EXPORT_INTERVAL=5000            # don't wait 60s for metrics
+   ```
+
+2. `curl` the selftest route once and give it ~10s (immediate if the
+   route force-flushes).
 3. Check the SDK's own startup/export logs for auth errors — a 401 means
    the key is missing/malformed; connection errors usually mean an
-   outbound network/proxy issue reaching `otlp.autter.dev`.
-4. Trigger one real error and confirm the SDK's exception-recording call
-   fired on that span.
+   outbound network/proxy issue reaching `otlp.autter.dev`. No export
+   errors means both `/v1/traces` and `/v1/metrics` were accepted.
+4. Ground truth in the dashboard (~1–2 min): an `autter.selftest` span,
+   one info-severity "autter selftest" issue, and request metrics for
+   `/__autter-selftest` where the SDK emits the HTTP duration histogram.
+   Traces arriving without metrics means the metrics side isn't wired or
+   the SDK doesn't emit the instrument — flag which one to the user.
+5. Trigger one real error too and confirm the SDK's exception-recording
+   call fired on that span — the selftest proves transport, not your
+   error-handler wiring.
+6. **Delete the selftest route** and unset the override env vars.

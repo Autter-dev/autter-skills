@@ -143,6 +143,64 @@ span.record_exception(&err);
 span.set_status(opentelemetry::trace::Status::error(err.to_string()));
 ```
 
+## Request metrics (both languages)
+
+The trace setup above alone gives Autter only 1%-sampled trace-derived
+usage rollups. Unsampled request stats — what the slow-process monitor
+uses for accurate HTTP coverage — come from the OTel HTTP-server duration
+histogram (`http.server.request.duration`, or the older
+`http.server.duration`; Autter's ingester folds exactly these two and
+ignores everything else), which only exists once a **meter provider** is
+registered.
+
+**Go** — add alongside the tracer provider; `otelhttp` then records the
+histogram automatically:
+
+```go
+import (
+    "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+    sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+)
+
+mexp, err := otlpmetrichttp.New(ctx,
+    otlpmetrichttp.WithEndpointURL("https://otlp.autter.dev/v1/metrics"),
+    otlpmetrichttp.WithHeaders(map[string]string{
+        "authorization": "Bearer " + os.Getenv("AUTTER_RUNTIME_KEY"),
+    }),
+)
+if err != nil {
+    return nil, err
+}
+mp := sdkmetric.NewMeterProvider(
+    sdkmetric.WithResource(res),
+    sdkmetric.WithReader(sdkmetric.NewPeriodicReader(mexp)), // 60s default
+)
+otel.SetMeterProvider(mp)
+// call mp.Shutdown(ctx) alongside the tracer shutdown
+```
+
+**Rust** — there is no ubiquitous HTTP-server metrics middleware; either
+record the histogram yourself in a small middleware, or tell the user
+their usage stats stay trace-derived (a 1%-sampled lower bound). Manual
+recording that Autter folds correctly:
+
+```rust
+// once, after building an SdkMeterProvider with an OTLP exporter pointed
+// at https://otlp.autter.dev/v1/metrics (mirror the trace exporter config):
+let hist = opentelemetry::global::meter("http-server")
+    .f64_histogram("http.server.request.duration")
+    .with_unit("s")
+    .build();
+// per request, in middleware:
+hist.record(elapsed_secs, &[
+    KeyValue::new("http.route", route),           // the pattern, not the raw path
+    KeyValue::new("http.response.status_code", status as i64),
+]);
+```
+
+(Metric-SDK builder APIs move between `opentelemetry_sdk` versions —
+check the docs of the version you pinned.)
+
 ## Instrumenting slow processes (both languages)
 
 Autter's dashboard flags processes that are slow AND repeating a lot
@@ -158,13 +216,57 @@ always-on tracer provider (same pattern as the error path) or accept that
 counts are a lower bound. Stable, low-cardinality names; ids go in
 attributes.
 
+## Selftest path (temporary — delete after verification)
+
+A throwaway route that proves both pipelines in one hit — add, verify,
+delete; never commit or deploy it. Go shown; mirror the same shape in
+Rust:
+
+```go
+// TEMPORARY autter selftest — delete after verification.
+mux.HandleFunc("/__autter-selftest", func(w http.ResponseWriter, r *http.Request) {
+    _, span := otel.Tracer("autter-selftest").Start(r.Context(), "autter.selftest")
+    span.AddEvent("exception", trace.WithAttributes(
+        attribute.String("exception.type", "Message"),
+        attribute.String("exception.message", "autter selftest"),
+        attribute.String("autter.severity", "info"),
+    ))
+    span.SetStatus(codes.Error, "autter selftest")
+    span.End()
+    tp.ForceFlush(r.Context()) // the TracerProvider from initObservability
+    mp.ForceFlush(r.Context()) // the MeterProvider, if wired
+    w.Write([]byte(`{"ok":true}`))
+})
+```
+
+The ERROR status lives on the internal child span (that status is what
+makes the ingester store the info-severity occurrence), so the request
+itself doesn't count as failed in traffic stats. The `ForceFlush` calls
+export immediately — no waiting on batch/interval timers. (Rust:
+`provider.force_flush()` on both providers.)
+
+At the default 1% ratio the selftest span inherits the request span's
+sampling decision and is usually dropped before export: for the
+verification run only, set the root sampler to 100%
+(`TraceIDRatioBased(1.0)` in Go, `Sampler::TraceIdRatioBased(1.0)` in
+Rust) and revert it together with the route.
+
 ## Verify (both languages)
 
-1. Build and run the service with the exporter configured and the real
-   `AUTTER_RUNTIME_KEY` value set.
-2. Hit any instrumented route once.
-3. Confirm the exporter doesn't log a connection/auth error on export (a
+1. Build and run with the real `AUTTER_RUNTIME_KEY` value set and the
+   root sampler temporarily at 100% (revert after).
+2. `curl` the selftest route once — the force-flushes run before it
+   returns.
+3. Confirm the exporters don't log a connection/auth error on export (a
    401 in exporter logs means the key is missing or wrong; a network error
-   means the endpoint URL or outbound egress is blocked).
-4. Trigger one real error path and confirm `RecordError`/`record_exception`
-   was called on that span.
+   means the endpoint URL or outbound egress is blocked). No errors means
+   both `/v1/traces` and `/v1/metrics` were accepted.
+4. Ground truth in the dashboard (~1–2 min): an `autter.selftest` span,
+   one info-severity "autter selftest" issue, and — if the meter provider
+   is wired — request metrics for `/__autter-selftest`. Traces arriving
+   without metrics means no meter provider: either wire it (section
+   above) or tell the user usage stats are trace-derived at 1%.
+5. Trigger one real error path too and confirm
+   `RecordError`/`record_exception` was called on that span — the
+   selftest proves transport, not your error-handler wiring.
+6. Delete the selftest route and revert the sampling override.
