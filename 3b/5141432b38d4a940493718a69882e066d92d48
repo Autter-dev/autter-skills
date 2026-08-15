@@ -1,0 +1,107 @@
+otel-generic-style/SKILL.md
+  s_493feb443518cc::t_fb1d29e39eb598 197-202,205
+  s_493feb443518cc::t_caa18f927e62da 3-5
+  s_493feb443518cc::t_d3f8ef5f0ee4cc 136-157,167-173
+otel-go-rust-style/SKILL.md
+  s_493feb443518cc::t_0a49af6e8c98a0 282-298,301
+  s_493feb443518cc::t_912b79b124bfd8 3-5
+  s_493feb443518cc::t_202e04f752ed9b 219-264
+  s_493feb443518cc::t_a1fcc73287f91e 332-338,341
+otel-node-style/SKILL.md
+  s_493feb443518cc::t_0bf0a0404ea771 280-281
+  s_493feb443518cc::t_e3437653f6c3b6 295-299,306-308,313-315,324-328
+  s_493feb443518cc::t_4eed789545d0b8 128-177
+  s_493feb443518cc::t_3199e2e316fd6b 358-365
+  s_493feb443518cc::t_94bcac8e315e69 3-5
+README.md
+  s_493feb443518cc::t_54019e1301d415 31
+  s_493feb443518cc::t_ae1024076aed87 5-6
+otel-python-style/SKILL.md
+  s_493feb443518cc::t_820ca523e7c855 3-5
+  s_493feb443518cc::t_a95e57ad382c34 288-302,305
+  s_493feb443518cc::t_24b94fdc4c191e 191-267
+  s_493feb443518cc::t_6de3e05009e435 337-343,347
+autter-runtime-setup/SKILL.md
+  s_493feb443518cc::t_2cd63bafa682f8 108-120
+  s_493feb443518cc::t_f0bf5e2552f2cd 3-5
+  s_493feb443518cc::t_9fbe15462e6866 215,217,224-231
+  s_493feb443518cc::t_c1cd5f04ff54c9 252-255
+  s_493feb443518cc::t_869b6a354c972a 60-70
+  s_493feb443518cc::t_9c65c61dfff0ee 279-283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "autter_version": "development:1.6.7",
+  "base_commit_sha": "3b5141432b38d4a940493718a69882e066d92d48",
+  "branch": "posthog/llm-tracing-skills",
+  "prompts": {
+    "s_493feb443518cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a005ea-a5cd-77ca-942e-ed93589fdcbe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:71e57fe1830dc6ad4504ae986506d6f3465ebf39595e2ee4490ff6a83abf47f4",
+      "total_additions": 345,
+      "total_deletions": 46,
+      "accepted_lines": 345,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_493feb443518cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a005ea-a5cd-77ca-942e-ed93589fdcbe",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Sagnik Ghosh <sagnik@worqhat.com>",
+      "messages_url": "cas:71e57fe1830dc6ad4504ae986506d6f3465ebf39595e2ee4490ff6a83abf47f4",
+      "stats": {
+        "total_additions": 345,
+        "total_deletions": 46,
+        "accepted_lines": 345,
+        "overriden_lines": 0,
+        "files": {
+          "README.md": {
+            "total_additions": 3,
+            "total_deletions": 3,
+            "accepted_lines": 3,
+            "overriden_lines": 0
+          },
+          "autter-runtime-setup/SKILL.md": {
+            "total_additions": 45,
+            "total_deletions": 13,
+            "accepted_lines": 45,
+            "overriden_lines": 0
+          },
+          "otel-generic-style/SKILL.md": {
+            "total_additions": 39,
+            "total_deletions": 9,
+            "accepted_lines": 39,
+            "overriden_lines": 0
+          },
+          "otel-go-rust-style/SKILL.md": {
+            "total_additions": 75,
+            "total_deletions": 6,
+            "accepted_lines": 75,
+            "overriden_lines": 0
+          },
+          "otel-node-style/SKILL.md": {
+            "total_additions": 79,
+            "total_deletions": 9,
+            "accepted_lines": 79,
+            "overriden_lines": 0
+          },
+          "otel-python-style/SKILL.md": {
+            "total_additions": 104,
+            "total_deletions": 6,
+            "accepted_lines": 104,
+            "overriden_lines": 0
+          }
+        }
+      }
+    }
+  }
+}
