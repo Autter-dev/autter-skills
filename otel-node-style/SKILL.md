@@ -1,8 +1,8 @@
 ---
 name: otel-node-style
-version: 1.0.0
-description: How to wire Autter Runtime into Node.js backends (Express, Fastify, Koa, NestJS, plain http) and Next.js using the official @autter/runtime-node and @autter/runtime-next packages.
-tags: [autter, telemetry, nodejs, nextjs, express, opentelemetry]
+version: 1.1.0
+description: How to wire Autter Runtime into Node.js backends (Express, Fastify, Koa, NestJS, plain http) and Next.js using the official @autter/runtime-node and @autter/runtime-next packages — errors, usage, and LLM tracing.
+tags: [autter, telemetry, nodejs, nextjs, express, opentelemetry, llm]
 author: autter
 ---
 
@@ -125,6 +125,56 @@ went. Use stable, low-cardinality names (`"email.digest"`, not
 background jobs, queue consumers, and scheduled tasks this way while
 wiring the service; ask before instrumenting more than the obvious ones.
 
+### LLM calls (Vercel AI SDK, OpenAI, Anthropic, …)
+
+`initAutterServer` **initialises the LLM tracer automatically** — GenAI
+spans (`gen_ai.*` attributes, Vercel AI SDK `ai.*` spans) are exempt from
+the 1% sampling, so every model call is recorded with model, tokens,
+latency, and a USD cost, and watched for spend spikes, failing models,
+and budget breaches. There is nothing to init; what's left is making the
+service's LLM calls *emit* those spans. Check for LLM usage (deps: `ai`,
+`openai`, `@anthropic-ai/sdk`, `@google/genai`, `langchain`, raw fetches
+to provider APIs) and wire whichever applies:
+
+**Vercel AI SDK** (`ai` package) — enable its telemetry on each call, and
+pass an opaque user id when one is in scope:
+
+```js
+const { text } = await generateText({
+  model: openai("gpt-5-mini"),
+  prompt,
+  experimental_telemetry: { isEnabled: true, metadata: { userId: user.id } },
+});
+```
+
+**Any other client** (openai/anthropic SDKs, raw fetch) — wrap the call:
+
+```js
+const { withLlmCall } = require("@autter/runtime-node");
+
+const res = await withLlmCall(
+  { provider: "openai", model: "gpt-5-mini", userId: user.id },
+  async (llm) => {
+    const out = await openai.chat.completions.create({ /* … */ });
+    llm.setUsage({
+      inputTokens: out.usage?.prompt_tokens,
+      outputTokens: out.usage?.completion_tokens,
+    });
+    return out;
+  },
+);
+```
+
+Errors inside are rethrown after marking the span — failing model calls
+surface both as error issues and as failed LLM calls. Costs are estimated
+ingest-side from a built-in price table; when the app already computes
+exact spend, report it with `llm.setCost(usd)`. Never put prompts,
+completions, or PII in attributes — model ids, token counts, and opaque
+user ids only. Wrap every model call site you find (there are usually
+few); ask before restructuring anything unusual (streaming helpers,
+custom gateways). Opt out entirely with `llmTracing: false` if the user
+asks.
+
 ### Graceful shutdown
 
 ```js
@@ -227,6 +277,8 @@ errors, so skipping this boundary silently misses them.
   `0.01`). Captured exceptions bypass sampling entirely — always sent.
   Raising this on a high-traffic service multiplies telemetry volume/cost;
   only change it if the user explicitly asks.
+- LLM tracing: on by default (`llmTracing`) — GenAI spans bypass the 1%
+  sampling and are always sent. Leave it on unless the user asks.
 - Metrics export every 60s (`metricIntervalMs`).
 - `environment` defaults to `NODE_ENV` (falls back to `"production"`).
   Set it explicitly if the user has a non-standard env var for this.
@@ -240,20 +292,27 @@ throwaway route, hit it once, then delete it. Never commit or deploy it;
 it's an unauthenticated endpoint that triggers telemetry sends.
 
 ```js
-const { withProcessSpan, captureMessage } = require("@autter/runtime-node");
+const {
+  withProcessSpan,
+  captureMessage,
+  emitLlmSelftestTrace,
+} = require("@autter/runtime-node");
 
 // TEMPORARY autter selftest — delete after verification.
 app.get("/__autter-selftest", async (_req, res) => {
   await withProcessSpan("autter.selftest", async () => {
     captureMessage("autter selftest", "info");
   });
-  res.json({ ok: true });
+  // Only when the service is wired for LLM tracing:
+  const llm = await emitLlmSelftestTrace();
+  res.json({ ok: true, llmTraceId: llm.traceId });
 });
 ```
 
 Next.js: same body in a temporary `app/api/autter-selftest/route.ts`,
-importing `withProcessSpan` and `captureServerMessage` from
-`@autter/runtime-next` and returning `Response.json({ ok: true })`.
+importing `withProcessSpan`, `captureServerMessage`, and
+`emitLlmSelftestTrace` from `@autter/runtime-next` and returning
+`Response.json({ ok: true, llmTraceId })`.
 
 One `curl` of the route exercises everything at once:
 
@@ -262,7 +321,11 @@ One `curl` of the route exercises everything at once:
   proving `/v1/traces` and the error/warning path;
 - the request itself is recorded by the HTTP instrumentation's
   `http.server.duration` histogram — the instrument Autter folds into
-  request rollups — proving `/v1/metrics` on the next export.
+  request rollups — proving `/v1/metrics` on the next export;
+- (LLM-wired services) `emitLlmSelftestTrace()` sends one fake LLM call —
+  provider/model `autter-selftest`, 1 input + 1 output token, cost 0, no
+  real model touched — force-flushed before it returns, proving GenAI
+  spans land as LLM calls. The returned `traceId` is what you look up.
 
 ## Verify
 
@@ -292,5 +355,12 @@ One `curl` of the route exercises everything at once:
 5. Ground truth in the dashboard (~1–2 min): an `autter.selftest` span,
    one info-severity "autter selftest" issue, and request metrics for
    `/__autter-selftest`.
-6. **Delete the selftest route** (and unset `OTEL_LOG_LEVEL`) once both
+6. LLM-wired services: the selftest response's `llmTraceId` call shows up
+   under **Runtime → LLM** as provider/model `autter-selftest` (self-hosted:
+   a `runtime_llm_calls` row with that `trace_id`). Traces arriving without
+   the LLM call means the ingester predates LLM support — have the user
+   update it. Then, if a real (cheap) model call is easy to trigger,
+   exercise one and confirm it lands with real token counts and a cost —
+   the selftest proves transport, not that every call site got wrapped.
+7. **Delete the selftest route** (and unset `OTEL_LOG_LEVEL`) once all
    signals are confirmed.

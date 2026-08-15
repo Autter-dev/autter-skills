@@ -1,8 +1,8 @@
 ---
 name: otel-python-style
-version: 1.0.0
-description: How to wire Autter Runtime into Python backends (FastAPI, Flask, Django, plain WSGI/ASGI) using the standard OpenTelemetry SDK — no Autter-specific package needed.
-tags: [autter, telemetry, python, fastapi, flask, django, opentelemetry]
+version: 1.1.0
+description: How to wire Autter Runtime into Python backends (FastAPI, Flask, Django, plain WSGI/ASGI) using the standard OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
+tags: [autter, telemetry, python, fastapi, flask, django, opentelemetry, llm]
 author: autter
 ---
 
@@ -188,6 +188,83 @@ an `ALWAYS_ON` sampler, same pattern the error path uses) or accept that
 counts are a lower bound. Use stable, low-cardinality span names; put ids
 in attributes.
 
+## LLM calls
+
+Autter recognises spans following the OTel GenAI semconv (`gen_ai.*`
+attributes) automatically and records each as an LLM call — model, tokens,
+latency, USD cost (estimated ingest-side unless the span reports
+`autter.llm.cost_usd`) — watched for spend spikes, failing models, and
+budget breaches. If the service calls LLM APIs (deps: `openai`,
+`anthropic`, `litellm`, `langchain`, `google-genai`, `boto3` Bedrock),
+wire this alongside the rest.
+
+**Emitting the spans.** Prefer the official GenAI instrumentations:
+
+```bash
+pip install opentelemetry-instrumentation-openai-v2   # openai client
+# anthropic/bedrock/vertex equivalents exist under opentelemetry-instrumentation-*
+```
+
+Under `opentelemetry-instrument` they activate automatically; in explicit
+setups call `OpenAIInstrumentor().instrument()` after
+`init_observability(...)`. Leave
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` unset (default off) —
+prompts/completions must not leave the service. For clients without an
+instrumentation, a manual span with the semconv attributes does the same:
+
+```python
+from opentelemetry.trace import SpanKind
+
+with tracer.start_as_current_span(
+    "chat gpt-5-mini",
+    kind=SpanKind.CLIENT,
+    attributes={
+        "gen_ai.operation.name": "chat",
+        "gen_ai.system": "openai",
+        "gen_ai.request.model": "gpt-5-mini",
+        "autter.user_id": user_id,  # opaque id — never an email
+    },
+) as span:
+    out = client.chat.completions.create(...)
+    span.set_attribute("gen_ai.usage.input_tokens", out.usage.prompt_tokens)
+    span.set_attribute("gen_ai.usage.output_tokens", out.usage.completion_tokens)
+```
+
+**Sampling exemption — required.** At the 1% ratio sampler, 99% of LLM
+spans are dropped and the cost numbers become garbage. Exempt GenAI spans
+in the sampler (Autter's Node package does exactly this internally); in
+`init_observability`, wrap the sampler:
+
+```python
+from opentelemetry.sdk.trace.sampling import ALWAYS_ON, Sampler
+
+class LlmAwareSampler(Sampler):
+    """Always sample GenAI spans; delegate everything else."""
+    def __init__(self, delegate):
+        self._delegate = delegate
+
+    def should_sample(self, parent_context, trace_id, name, kind=None,
+                      attributes=None, links=None, trace_state=None):
+        target = self._delegate
+        if name.startswith(("chat ", "embeddings ", "gen_ai.", "ai.")) or any(
+            key.startswith("gen_ai.") for key in (attributes or {})
+        ):
+            target = ALWAYS_ON
+        return target.should_sample(parent_context, trace_id, name, kind,
+                                    attributes, links, trace_state)
+
+    def get_description(self):
+        return f"LlmAware({self._delegate.get_description()})"
+
+# in init_observability:
+#   sampler=LlmAwareSampler(ParentBased(TraceIdRatioBased(ratio)))
+```
+
+The zero-code `opentelemetry-instrument` path can't take a custom sampler
+from env vars — for services where LLM tracing matters, use the explicit
+setup (above) so the exemption exists; otherwise tell the user their LLM
+calls are 1%-sampled.
+
 ## Selftest path (temporary — delete after verification)
 
 A throwaway route that proves both pipelines in one hit. Add it, verify,
@@ -208,9 +285,24 @@ def autter_selftest():
             "autter.severity": "info",
         })
         span.set_status(trace.Status(trace.StatusCode.ERROR, "autter selftest"))
+
+    # LLM selftest — only when the service is wired for LLM tracing: one
+    # fake call (no real model touched) proves gen_ai spans land.
+    llm_trace_id = None
+    with tracer.start_as_current_span("chat autter-selftest", attributes={
+        "gen_ai.operation.name": "chat",
+        "gen_ai.system": "autter-selftest",
+        "gen_ai.request.model": "autter-selftest",
+        "gen_ai.usage.input_tokens": 1,
+        "gen_ai.usage.output_tokens": 1,
+        "autter.llm.cost_usd": 0,
+        "autter.selftest": True,
+    }) as llm_span:
+        llm_trace_id = format(llm_span.get_span_context().trace_id, "032x")
+
     trace.get_tracer_provider().force_flush()
     metrics.get_meter_provider().force_flush()
-    return {"ok": True}
+    return {"ok": True, "llm_trace_id": llm_trace_id}
 ```
 
 The `force_flush()` calls make it deterministic — both exports fire
@@ -242,8 +334,14 @@ OTEL_TRACES_SAMPLER_ARG=1 opentelemetry-instrument python app.py
    `/__autter-selftest`. Traces arriving without metrics means the meter
    provider isn't registered (or the instrumentor ran before
    `init_observability`) — exactly the gap the selftest exists to catch.
-5. Trigger one real exception too and confirm `span.record_exception`
+5. LLM-wired services: the `llm_trace_id` call appears under **Runtime →
+   LLM** as provider/model `autter-selftest` (self-hosted: a
+   `runtime_llm_calls` row). Remember the selftest ran with sampling forced
+   to 100% — real LLM calls only survive the default 1% run if the
+   `LlmAwareSampler` exemption is in place, so double-check it's wired
+   before trusting this signal.
+6. Trigger one real exception too and confirm `span.record_exception`
    fired (wrap it manually per above if the automatic instrumentation
    doesn't cover that code path, e.g. a background job) — the selftest
    proves transport, not your error-handler wiring.
-6. Delete the selftest route and drop the temporary env override.
+7. Delete the selftest route and drop the temporary env override.

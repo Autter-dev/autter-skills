@@ -1,8 +1,8 @@
 ---
 name: otel-generic-style
-version: 1.0.0
-description: Fallback guide for wiring Autter Runtime into any backend language/framework not covered by a dedicated style skill (Java, .NET, PHP, Ruby, Elixir, Kotlin, etc.) using standard OpenTelemetry.
-tags: [autter, telemetry, opentelemetry, otlp, generic]
+version: 1.1.0
+description: Fallback guide for wiring Autter Runtime into any backend language/framework not covered by a dedicated style skill (Java, .NET, PHP, Ruby, Elixir, Kotlin, etc.) using standard OpenTelemetry — errors, usage, and LLM tracing.
+tags: [autter, telemetry, opentelemetry, otlp, generic, llm]
 author: autter
 ---
 
@@ -133,7 +133,28 @@ dropped — give job spans an always-on tracer (the same separate-provider
 pattern from Step 5) or accept that their counts are a lower bound. Use
 stable, low-cardinality span names; ids go in attributes.
 
-## Step 7: Selftest path (temporary — delete after verification)
+## Step 7: LLM calls (when the service calls LLM APIs)
+
+Autter recognises spans following the OTel GenAI semconv automatically
+and records each as an LLM call — model, tokens, latency, USD cost
+(estimated ingest-side unless the span reports `autter.llm.cost_usd`).
+If an ecosystem GenAI instrumentation exists (Java agent ≥ 2.x covers
+several SDKs), enable it; otherwise wrap each model call in a CLIENT
+span named `"<operation> <model>"` (e.g. `chat gpt-5-mini`) carrying:
+
+- `gen_ai.operation.name` — "chat", "embeddings", …
+- `gen_ai.system` — "openai", "anthropic", …
+- `gen_ai.request.model`, and after the response
+  `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens`
+- optionally `autter.user_id` (opaque id) and `autter.llm.cost_usd`
+  (exact cost, when the app computes it)
+
+Never put prompts, completions, or PII in attributes. These spans must
+**bypass the 1% sampler** or cost numbers are garbage: emit them from a
+tracer on a separate always-on provider (the Step 5 pattern), or wrap the
+root sampler to always sample spans with `gen_ai.*` creation attributes.
+
+## Step 8: Selftest path (temporary — delete after verification)
 
 Add a throwaway route — `/__autter-selftest` — that, using that
 language's OTel API: starts a child span named `autter.selftest`, adds an
@@ -143,9 +164,13 @@ ERROR (that status is what makes the ingester store the occurrence; on
 the internal child span it doesn't mark the request as failed), ends it,
 and — if the SDK exposes it — force-flushes the tracer and meter
 providers before responding. Hitting the route also feeds the HTTP
-duration histogram, so one request exercises both pipelines. Never
-commit or deploy the route; it's unauthenticated and triggers telemetry
-sends.
+duration histogram, so one request exercises both pipelines. For
+services wired for LLM tracing (Step 7), also emit one fake LLM span from
+the same route — name `chat autter-selftest`, `gen_ai.system` and
+`gen_ai.request.model` both `autter-selftest`, 1 input + 1 output token,
+`autter.llm.cost_usd: 0` — and return its trace id in the response; no
+real model is touched. Never commit or deploy the route; it's
+unauthenticated and triggers telemetry sends.
 
 ## Verify
 
@@ -169,7 +194,12 @@ sends.
    `/__autter-selftest` where the SDK emits the HTTP duration histogram.
    Traces arriving without metrics means the metrics side isn't wired or
    the SDK doesn't emit the instrument — flag which one to the user.
-5. Trigger one real error too and confirm the SDK's exception-recording
+5. LLM-wired services: the fake `autter-selftest` call appears under
+   **Runtime → LLM** (self-hosted: a `runtime_llm_calls` row with the
+   returned trace id). Remember the selftest ran with sampling forced up —
+   real LLM calls only survive the default 1% run with the Step 7
+   exemption in place; double-check it before trusting this signal.
+6. Trigger one real error too and confirm the SDK's exception-recording
    call fired on that span — the selftest proves transport, not your
    error-handler wiring.
-6. **Delete the selftest route** and unset the override env vars.
+7. **Delete the selftest route** and unset the override env vars.
