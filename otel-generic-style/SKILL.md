@@ -1,6 +1,6 @@
 ---
 name: otel-generic-style
-version: 1.1.0
+version: 1.1.1
 description: Fallback guide for wiring Autter Runtime into any backend language/framework not covered by a dedicated style skill (Java, .NET, PHP, Ruby, Elixir, Kotlin, etc.) using standard OpenTelemetry — errors, usage, and LLM tracing.
 tags: [autter, telemetry, opentelemetry, otlp, generic, llm]
 author: autter
@@ -98,6 +98,15 @@ as an Autter issue when a span either:
 Find that language's method name for these two operations (they exist in
 every OTel SDK) and call them in the top-level error handler / middleware
 so all errors are captured centrally, rather than in every call site.
+
+**Grouping**: recording the exception attaches its stack trace to the
+event. Autter parses native stack formats server-side — JVM (Java, Kotlin,
+Scala), .NET, and others — and groups by the top function and file, so the
+same defect stays one issue across re-deploys (line numbers are ignored)
+and two different defects with the same message stay separate. Keep the
+stack on the event; do not strip or truncate it away. If a language is not
+one Autter parses directly, a structured stack still groups by a templated
+signature rather than collapsing every same-message error into one issue.
 
 **Warnings**: add an `autter.severity` attribute (`"fatal" | "error" |
 "warning" | "info"`) to the exception event. Autter stores warnings in the

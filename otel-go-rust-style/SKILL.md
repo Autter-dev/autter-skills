@@ -1,6 +1,6 @@
 ---
 name: otel-go-rust-style
-version: 1.1.0
+version: 1.1.1
 description: How to wire Autter Runtime into Go and Rust backends using each language's official OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
 tags: [autter, telemetry, go, rust, opentelemetry, llm]
 author: autter
@@ -142,6 +142,15 @@ span.record("error", true);
 span.record_exception(&err);
 span.set_status(opentelemetry::trace::Status::error(err.to_string()));
 ```
+
+**Grouping (both languages)**: `RecordError` (Go) and `record_exception`
+(Rust) attach the exception type, message, and backtrace. Autter parses the
+Go and Rust stack formats server-side and groups by the top function and
+file — so the same panic stays one issue across re-deploys (line numbers
+and pointer offsets are ignored) and two different panics that share a
+message stay separate. Keep the backtrace on the event; do not strip it.
+For Rust, build with a backtrace available (`RUST_BACKTRACE=1`, or capture
+it in your error type) so the frames reach the exception event.
 
 ## Request metrics (both languages)
 

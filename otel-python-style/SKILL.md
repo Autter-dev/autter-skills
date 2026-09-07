@@ -1,6 +1,6 @@
 ---
 name: otel-python-style
-version: 1.1.0
+version: 1.1.1
 description: How to wire Autter Runtime into Python backends (FastAPI, Flask, Django, plain WSGI/ASGI) using the standard OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
 tags: [autter, telemetry, python, fastapi, flask, django, opentelemetry, llm]
 author: autter
@@ -144,6 +144,11 @@ with tracer.start_as_current_span("job.process_payment") as span:
 Errors surface as Autter issues whenever a span records an exception
 (`span.record_exception`) or ends with `ERROR` status — this is standard
 OTel behavior, not something Autter needs configured separately.
+`record_exception` attaches the traceback; Autter parses the Python stack
+format server-side and groups by the top function and file, so the same
+defect stays one issue across re-deploys (line numbers are ignored) and two
+different defects that share a message stay separate. Keep the traceback on
+the event; do not strip it.
 
 ## Reporting warnings
 
