@@ -1,6 +1,6 @@
 ---
 name: otel-python-style
-version: 1.1.1
+version: 1.2.0
 description: How to wire Autter Runtime into Python backends (FastAPI, Flask, Django, plain WSGI/ASGI) using the standard OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
 tags: [autter, telemetry, python, fastapi, flask, django, opentelemetry, llm]
 author: autter
@@ -16,6 +16,18 @@ has a gRPC-friendly deployment — HTTP is simpler and what Autter's ingester
 documents first).
 
 ## Install
+
+Inspect existing initialization first. Reuse its providers and exporters; do not add a second SDK.
+
+## Endpoint regression requirements
+
+The general setup below also needs explicit-bucket **delta** HTTP duration histograms for endpoint detection. Configure the installed metric exporter for delta temporality; do not leave its cumulative default unchanged. Export at most two minutes apart. Set route templates, HTTP methods, the deployed commit SHA, stable service and environment names, and a unique service instance ID.
+
+Keep normal trace sampling. Add slow-request retention only through a supported SDK or collector policy; `retainTracesAboveMs` is a Node/Next.js option, not a Python option. Capture database and dependency child spans for trace comparison. Do not infer p95 from sampled traces. The platform rollout does not change these application settings.
+
+Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). Draft fixes need human review. Verify with existing production telemetry, not artificial errors or requests. Run any selftest below only in an isolated test environment.
+
+## Packages
 
 ```bash
 pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http

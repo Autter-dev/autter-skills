@@ -1,6 +1,6 @@
 ---
 name: otel-go-rust-style
-version: 1.1.1
+version: 1.2.0
 description: How to wire Autter Runtime into Go and Rust backends using each language's official OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
 tags: [autter, telemetry, go, rust, opentelemetry, llm]
 author: autter
@@ -12,6 +12,18 @@ There is no Autter package for Go or Rust — the ingester speaks standard
 OTLP/HTTP, so each language's own OTel SDK talks to it directly.
 
 ## Go
+
+Before setup, inspect and reuse existing providers and exporters. Do not initialize another SDK.
+
+## Endpoint regression requirements
+
+For Go and Rust, configure the installed metric exporter's temporality selector for **delta**, not cumulative. Use explicit HTTP duration buckets and an export interval of at most two minutes. The general metric examples below need this exporter configuration before endpoint detection can use them. Check the API for the installed SDK version rather than assuming a shared environment variable.
+
+Include route templates, HTTP methods, the deployed commit SHA, stable service and environment names, and a unique service instance ID. Keep normal traces and configure supported slow-request retention where needed. The Node/Next.js `retainTracesAboveMs` option does not apply to Go or Rust. Add dependency child spans; do not calculate endpoint p95 from sampled traces.
+
+Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). The platform rollout does not change application settings. Fixes remain draft pull requests for human review. Use existing production telemetry for verification; run selftests only in an isolated test environment.
+
+## Go packages
 
 ```bash
 go get go.opentelemetry.io/otel \
@@ -202,6 +214,7 @@ let hist = opentelemetry::global::meter("http-server")
     .build();
 // per request, in middleware:
 hist.record(elapsed_secs, &[
+    KeyValue::new("http.request.method", method),
     KeyValue::new("http.route", route),           // the pattern, not the raw path
     KeyValue::new("http.response.status_code", status as i64),
 ]);

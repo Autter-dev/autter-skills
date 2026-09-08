@@ -71,6 +71,12 @@ secret manager) as `AUTTER_RUNTIME_KEY` — **don't paste key values into
 the agent chat**. The skills are written to only ever reference the env
 var by name; the value never needs to reach the agent.
 
+## Endpoint regressions
+
+The setup skills cover request histograms, release identity, and trace comparison requirements. Node/Next.js examples use SDK 1.3.1 and opt into bounded slow-request retention. External OTel exporters need explicit-bucket delta histograms. Self-hosted ingesters require 1.3.1 or later.
+
+Enabling detection in the platform does not update customer SDKs. Incident feedback lets a team mark a diagnosis as correct, incorrect, or expected. Fixes remain draft pull requests for human review. Production verification uses existing telemetry; selftests belong only in isolated test environments.
+
 Full docs: [github.com/Autter-dev/autter-runtime](https://github.com/Autter-dev/autter-runtime).
 
 ## License

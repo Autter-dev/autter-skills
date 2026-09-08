@@ -1,6 +1,6 @@
 ---
 name: autter-runtime-setup
-version: 1.1.0
+version: 1.3.0
 description: Install Autter Runtime (open-source error + usage + LLM telemetry) into a codebase, regardless of language or framework. Run this first — it inventories the repo and routes to the right style skill for each service.
 tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding]
 author: autter
@@ -130,6 +130,22 @@ while wiring a service also wrap its recurring units of work in spans —
 around the job body in raw OTel stacks (see each style skill). Use
 stable, low-cardinality span names; ids go in attributes.
 
+### Endpoint regressions
+
+Endpoint regression detection is separate from the slow-process monitor. It compares request-duration histogram buckets, then opens an incident with normal and slow traces. The platform rollout does not change SDK settings in customer applications.
+
+- Inspect and reuse the existing SDK initialization and providers. Do not add a second SDK.
+- Use Node or Next.js SDK 1.3.0 or later. Prefer patch 1.3.1. Self-hosted ingesters require 1.3.1 or later.
+- Set `release` to the deployed commit SHA. Keep service and environment names stable.
+- For Node and Next.js, add `retainTracesAboveMs: 2000` to the existing initialization when slow successful traces are needed. This is opt-in and can increase export volume. Keep normal trace sampling unchanged.
+- For external OTel, configure explicit-bucket delta histograms, an export interval of at most two minutes, route templates, HTTP methods, release, and a unique service instance ID. Check the installed SDK's exporter settings; environment-variable support differs by language.
+- Add database and dependency child spans where needed. HTTP instrumentation alone does not measure all database work.
+- Do not calculate p95 from sampled or selectively retained traces. Missing historical histogram buckets and discarded traces cannot be recreated.
+
+Team feedback means **Correct diagnosis**, **Incorrect diagnosis**, or **Expected behavior** on an incident. The latest feedback controls further fix work. Incorrect or expected feedback stops new fix work; it does not prove recovery. A fix requires trace and source evidence and creates a draft pull request. Keep human review before merge and deployment. Do not add automatic merge, deployment, or rollback.
+
+See [Endpoint regression telemetry](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md) for the telemetry contract and retention limits.
+
 ## Step 3: Prefer the relay pattern when a service has both a frontend and a backend
 
 If a service pair shares an origin (a backend serving or fronting its own
@@ -159,6 +175,8 @@ point the browser skill at a client key if standing up a relay isn't worth
 it for their stack.
 
 ## Step 4: Verify — preflight, then selftest path
+
+Use the selftest steps only in a local or isolated test environment. Do not create errors, synthetic LLM calls, or artificial traffic in production to verify setup. In production, inspect existing telemetry and exporter failures. Check histogram format and retained traces separately. Do not claim detection works until enough fresh traffic has reached the detector.
 
 Verification is two-stage: a **preflight** that proves the key and
 endpoint work before any app runs, then a temporary **selftest path** per

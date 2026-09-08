@@ -1,6 +1,6 @@
 ---
 name: otel-generic-style
-version: 1.1.1
+version: 1.2.0
 description: Fallback guide for wiring Autter Runtime into any backend language/framework not covered by a dedicated style skill (Java, .NET, PHP, Ruby, Elixir, Kotlin, etc.) using standard OpenTelemetry — errors, usage, and LLM tracing.
 tags: [autter, telemetry, opentelemetry, otlp, generic, llm]
 author: autter
@@ -14,6 +14,16 @@ Every mainstream OpenTelemetry SDK (Java, .NET, PHP, Ruby, Elixir, Kotlin,
 Swift, C++, ...) can export to it out of the box.
 
 ## Step 1: Install that language's official OTel SDK
+
+First inspect the installed SDK and reuse its providers and exporters. Do not add duplicate initialization.
+
+### Endpoint regression requirements
+
+The general environment setup below is not sufficient for endpoint detection on every SDK. Configure explicit-bucket **delta** HTTP duration histograms and an export interval of at most two minutes. Verify temporality settings against the installed language SDK. Do not assume that one exporter environment variable works in every language.
+
+Include route templates, HTTP methods, the deployed commit SHA, stable service and environment names, and a unique service instance ID. Keep normal traces and add supported slow-request retention and dependency child spans where needed. `retainTracesAboveMs` applies only to the Node/Next.js SDK. Never calculate endpoint p95 from sampled traces.
+
+Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). The platform rollout does not update application settings. Fixes remain draft pull requests for human review. Use existing production telemetry for verification; run selftests only in an isolated test environment.
 
 Search for `"<language> opentelemetry sdk"` if you don't already know the
 package name — e.g.:

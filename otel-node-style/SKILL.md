@@ -1,6 +1,6 @@
 ---
 name: otel-node-style
-version: 1.1.0
+version: 1.2.0
 description: How to wire Autter Runtime into Node.js backends (Express, Fastify, Koa, NestJS, plain http) and Next.js using the official @autter/runtime-node and @autter/runtime-next packages — errors, usage, and LLM tracing.
 tags: [autter, telemetry, nodejs, nextjs, express, opentelemetry, llm]
 author: autter
@@ -18,10 +18,10 @@ and never hardcode it.
 ## Plain Node (Express, Fastify, Koa, NestJS, http)
 
 ```bash
-npm install @autter/runtime-node
+npm install @autter/runtime-node@^1.3.1
 ```
 
-Create an instrumentation entry that loads **before** the app:
+Reuse the existing initialization if present. Otherwise, create an instrumentation entry that loads **before** the app. Do not register a second SDK or provider.
 
 ```js
 // instrument.cjs
@@ -30,7 +30,9 @@ const { initAutterServer } = require("@autter/runtime-node");
 initAutterServer({
   apiKey: process.env.AUTTER_RUNTIME_KEY,
   service: "<pick a name — e.g. the package/app name>",
-  release: process.env.GIT_SHA, // optional
+  environment: "production",
+  release: process.env.GIT_SHA,
+  retainTracesAboveMs: 2000,
 });
 ```
 
@@ -234,7 +236,7 @@ follow.
 ## Next.js (any router)
 
 ```bash
-npm install @autter/runtime-next
+npm install @autter/runtime-next@^1.3.1
 ```
 
 Three files:
@@ -248,7 +250,9 @@ export async function register() {
     registerAutter({
       apiKey: process.env.AUTTER_RUNTIME_KEY!,
       service: "<app name>",
+      environment: "production",
       release: process.env.GIT_SHA,
+      retainTracesAboveMs: 2000,
     });
   }
 }
@@ -291,6 +295,11 @@ errors, so skipping this boundary silently misses them.
 
 ## Defaults you should know (don't change without asking)
 
+- The setup examples opt into slow successful trace retention with `retainTracesAboveMs: 2000`. The SDK default is off. Choose the threshold for the service and check export volume. Retention has buffer and time limits and covers only the local process; traces can be incomplete.
+- Use the actual deployment environment and commit SHA in the examples. Endpoint detection requires request histograms, not percentiles from sampled traces. The server rollout does not upgrade an installed SDK or enable its retention option.
+- Add needed database or dependency instrumentation through the existing `instrumentations` option. Normal and slow traces need child spans before the platform can produce a useful draft fix. Missing historical traces cannot be recovered.
+- Self-hosted ingesters require 1.3.1 or later for numeric delta histograms. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). Fixes remain draft pull requests for human review, not automatic deployments or rollbacks.
+
 - Trace sampling: 1% of successful traces (`traceSampleRate`, default
   `0.01`). Captured exceptions bypass sampling entirely — always sent.
   Raising this on a high-traffic service multiplies telemetry volume/cost;
@@ -304,6 +313,8 @@ errors, so skipping this boundary silently misses them.
   `endpoint` if the user is self-hosting the OSS ingester.
 
 ## Selftest path (temporary — delete after verification)
+
+Use this path only in a local or isolated test environment. Do not generate artificial production errors or traffic. Inspect existing production telemetry instead.
 
 To prove both pipelines end-to-end — traces/errors AND metrics — add a
 throwaway route, hit it once, then delete it. Never commit or deploy it;
