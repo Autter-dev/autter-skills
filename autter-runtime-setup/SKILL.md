@@ -1,6 +1,6 @@
 ---
 name: autter-runtime-setup
-version: 1.2.0
+version: 1.3.0
 description: Install Autter Runtime (open-source error + usage + LLM telemetry) into a codebase, regardless of language or framework. Run this first — it inventories the repo, routes to the right style skill for each service, and records the instrumentation convention in the repo's agent-instruction files so new code stays instrumented.
 tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 author: autter
