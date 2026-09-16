@@ -107,16 +107,18 @@ blanketing every log line.
 
 **LLM calls.** Autter records every LLM/GenAI call with model, tokens,
 latency, and a USD cost — then watches for spend spikes, failing models,
-and budget breaches (they open incidents under **Runtime → LLM**). LLM
-spans are exempt from trace sampling: 1% of model calls is useless for
-cost tracking, so they ride an always-recorded path. For each service the
-inventory flagged as calling LLM APIs, follow the style skill's **LLM
-calls** section while wiring it: the Node packages initialise the LLM
-tracer automatically inside `initAutterServer` (turn on Vercel AI SDK
-telemetry per call, or wrap other clients in `withLlmCall`); raw-OTel
-stacks emit `gen_ai.*` spans with a sampling exemption. Never put prompts,
-completions, or PII in span attributes — model ids, token counts, and
-opaque user ids only.
+budget breaches, unusually expensive / high-token calls, and high-latency
+responses (they open incidents under **Runtime → LLM**, with fix PRs where
+a safe change exists). LLM spans are exempt from trace sampling: 1% of
+model calls is useless for cost tracking, so they ride an always-recorded
+path. For each service the inventory flagged as calling LLM APIs, follow
+the style skill's **LLM calls** section while wiring it: the Node packages
+initialise the LLM tracer automatically inside `initAutterServer` — wrap
+provider SDK clients once with `instrumentLlmClient` (preferred), turn on
+Vercel AI SDK telemetry per call, or wrap raw-fetch / unusual clients in
+`withLlmCall`; raw-OTel stacks emit `gen_ai.*` spans with a sampling
+exemption. Never put prompts, completions, or PII in span attributes —
+model ids, token counts, and opaque user ids only.
 
 **Slow processes.** Autter's dashboard continuously watches the telemetry
 for processes that are slow AND repeating a lot (the slow-process
@@ -338,8 +340,10 @@ When you write or change code here:
   process span (`withProcessSpan(name, fn)`) with a stable, low-cardinality name
   so the slow-process monitor can see them (HTTP routes are covered already).
 - **LLM calls:** route every model call through the wired LLM tracer
-  (`withLlmCall` / the Vercel AI SDK telemetry flag) so tokens and cost are
-  recorded.
+  (`instrumentLlmClient` for provider SDKs, the Vercel AI SDK telemetry
+  flag, or `withLlmCall` for raw fetch) so tokens, latency, and cost are
+  recorded — Autter flags spend spikes, failing models, expensive /
+  high-token calls, and high-latency responses automatically.
 - **Keys & privacy:** the ingest key is referenced only by env var
   (`AUTTER_RUNTIME_KEY`), never inlined. Never put prompts, completions, PII, or
   secrets in span attributes or message context — ids, counts, and model names
@@ -364,11 +368,13 @@ Tell the user, concisely:
   yet).
 - That errors show up as issues in the Autter dashboard once real traffic
   hits an instrumented path — usage metrics follow ~60s later.
-- Which services got LLM tracing, and how their calls are emitted (Vercel
-  AI SDK telemetry flag, `withLlmCall`, or raw `gen_ai.*` spans) — every
-  model call lands under **Runtime → LLM** with tokens and cost, watched
-  automatically for spend spikes, failing models, and budget breaches. If
-  an LLM-calling service was left unwired, say so explicitly.
+- Which services got LLM tracing, and how their calls are emitted
+  (`instrumentLlmClient`, Vercel AI SDK telemetry flag, `withLlmCall`, or
+  raw `gen_ai.*` spans) — every model call lands under **Runtime → LLM**
+  with tokens, latency, and cost, watched automatically for spend spikes,
+  failing models, budget breaches, unusually expensive / high-token calls,
+  and high-latency responses. If an LLM-calling service was left unwired,
+  say so explicitly.
 - That recurring slow processes (slow routes, slow instrumented jobs) are
   flagged automatically as performance incidents under **Runtime →
   Incidents**, with an automated optimization analysis and, when a safe
