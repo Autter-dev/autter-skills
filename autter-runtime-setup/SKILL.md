@@ -21,7 +21,11 @@ Autter Runtime needs one ingest key per repository to authenticate
 telemetry. **You never need the key's value — only the name of the env var
 it lives in.** Never ask the user to paste a key into the chat.
 
-Ask the user: **"Do you already have an Autter ingest key for this
+**Do not reuse an MCP/CLI access token** (created under Access Tokens for
+Cursor/CLI login). Runtime uses a separate **Runtime ingest key**
+(`autter_rt_…` / `autter_rtc_…`) stored as `AUTTER_RUNTIME_KEY`.
+
+Ask the user: **"Do you already have an Autter Runtime ingest key for this
 repository set as an environment variable?"**
 
 - If yes: ask for the **env var name only** (`AUTTER_RUNTIME_KEY` by
