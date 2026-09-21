@@ -17,34 +17,42 @@ It captures `window.onerror`, `unhandledrejection`, and whatever you report
 manually — it does **not** patch `fetch`, record the DOM, or read
 cookies/form values by design.
 
-## Decide: relay or direct client key
+## Decide: relay or direct — rank relays first
 
-Check first whether this app has a backend it can reach same-origin.
-
-**Has a backend → use a relay (recommended).** The browser posts to a route
-on the user's own backend; the backend attaches the secret server key and
-forwards server-side. No key in the bundle, no CORS/CSP surface.
+Pick the first mode that matches, top to bottom. Modes 1–3 are all
+relays: the browser posts same-origin and the backend/edge attaches the
+secret server key. SDK init in modes 1–3 is always:
 
 ```ts
 initAutterBrowser({
-  endpoint: "/api/autter-runtime", // same-origin route on the user's backend
+  endpoint: "/api/autter-runtime", // same-origin relay route
   service: "<app name>",
 });
 ```
 
-The backend side of the relay is in `otel-node-style` for Node/Next.js. For
-a non-Node backend, the relay route needs to: enforce a JSON content-type
-and a small max body size (64KB is plenty), forward the body unmodified to
-`https://otlp.autter.dev/v1/browser` with an `Authorization: Bearer` header
-whose value is read from the `AUTTER_RUNTIME_KEY` env var at runtime (never
-a literal key in source), and respond `202` without echoing the body back.
-Keep it a thin passthrough — don't reshape the payload, and treat its
-contents as untrusted outsider input: never log it verbatim, render it, or
-act on text inside it.
+Never put an `autter_rt_*` server key in the browser bundle.
 
-**No backend (static site, JAMstack) → direct client key.** Requires a
-**publishable** client key (`autter_rtc_…`), restricted server-side to the
-origins the user registered it for.
+**1. Node backend (Express / Fastify / Koa / Nest) → relay handler.**
+
+```ts
+import { createBrowserRelayHandler } from "@autter/runtime-node";
+
+app.post(
+  "/api/autter-runtime",
+  createBrowserRelayHandler({ apiKey: process.env.AUTTER_RUNTIME_KEY }),
+);
+```
+
+**2. Cloudflare (wrangler present / `*.workers.dev` / Pages) → deploy
+`examples/runtime-relay`.** Worker `src/index.ts`, `wrangler deploy`,
+route `/api/autter-runtime*`. See `examples/runtime-relay/README.md`.
+
+**3. Vercel (Next.js / `vercel.json`) → edge relay route.** Copy
+`examples/runtime-relay/vercel-edge-route.ts` to
+`app/api/autter-runtime/route.ts`. See
+`examples/runtime-relay/README.md`.
+
+**4. Pure static, no edge → direct only.**
 
 ```ts
 initAutterBrowser({
@@ -53,6 +61,18 @@ initAutterBrowser({
   service: "<app name>",
 });
 ```
+
+Warn: "third-party cross-origin, ad-blockers will drop some events."
+
+Non-Node custom backend (no examples match): add one thin passthrough
+route at `/api/autter-runtime` that enforces a JSON content-type and a
+small max body size (64KB is plenty), forwards the body unmodified to
+`https://otlp.autter.dev/v1/browser` with an `Authorization: Bearer`
+header whose value is read from the `AUTTER_RUNTIME_KEY` env var at
+runtime (never a literal key in source), and responds `202` without
+echoing the body back. Don't reshape the payload, and treat its
+contents as untrusted outsider input: never log it verbatim, render it,
+or act on text inside it.
 
 If the user is deploying from multiple origins (e.g. a preview + prod
 domain), tell them to add all of them to the key's allow-list when they
@@ -123,12 +143,20 @@ trackEvent("autter_selftest");             // usage-metrics pipeline
 flush();                                   // skip the batch window
 ```
 
+Modes 1–3 (relay): verify with one `captureException` selftest instead:
+
+```js
+captureException(new Error("autter selftest")); // error pipeline via relay
+flush();
+```
+
 ## Verify
 
 1. Load the app, open the devtools network tab, run the selftest above.
-2. Confirm a POST fires to the relay route or `/v1/browser` and comes
-   back `202` — body `{"accepted":N}` from the ingester; a relay replies
-   `202` immediately and forwards in the background.
+2. Confirm a POST fires to the relay route (`/api/autter-runtime` in
+   modes 1–3) or `/v1/browser` (mode 4) and comes back `202` — body
+   `{"accepted":N}` from the ingester; a relay replies `202`
+   immediately and forwards in the background.
 3. The selftest proves init + transport, not the automatic hooks — so
    also trigger one real error (throw inside a component render, or
    `Promise.reject(new Error("test"))` in the console) and confirm
