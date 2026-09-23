@@ -8,6 +8,15 @@ author: autter
 
 # Python style
 
+For continuous detection, add database, outbound HTTP, and queue
+instrumentations in addition to framework spans. A failed normal return can
+be reported with an `autter.outcome` OTel event carrying
+`autter.outcome.status=error`, a stable `autter.outcome.name`, and a short
+`autter.outcome.message`; set the span status to ERROR. Symbolized pprof
+from a supported profiler can be uploaded to `/v1/profiles`. The optional
+`adapters/python/caught_exceptions.py` hook samples handled exceptions but
+uses Python tracing and must be enabled explicitly for targeted diagnosis.
+
 There is no `autter` Python package — Autter Runtime's ingester speaks
 standard **OTLP/HTTP**, so any language with an OTel SDK works by pointing
 it at the ingester. For Python, use the official `opentelemetry-sdk` +

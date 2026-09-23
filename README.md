@@ -37,7 +37,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 
 ## Why this works for any language
 
-Autter Runtime's ingester is just two credentials and three HTTP endpoints:
+Autter Runtime's ingester uses two key types and these HTTP endpoints:
 
 | Credential | Lives in | Can |
 | --- | --- | --- |
@@ -48,6 +48,8 @@ Autter Runtime's ingester is just two credentials and three HTTP endpoints:
 | --- | --- |
 | `POST /v1/traces`, `POST /v1/metrics` | OTLP/HTTP — protobuf or JSON |
 | `POST /v1/browser` | compact JSON (`@autter/runtime-browser` payload) |
+| `POST /v1/profiles` | symbolized pprof (server key only) |
+| `POST /v1/sourcemaps` | release-keyed source map JSON (server key only) |
 
 Any language with an OpenTelemetry SDK can send server telemetry — that's
 every mainstream language. Only Node.js and the browser get dedicated

@@ -8,6 +8,14 @@ author: autter
 
 # Generic / any-language style
 
+For continuous detection, enable available HTTP, dependency, database, and
+background worker instrumentations. ERROR spans, exception events, and
+HTTP 5xx are grouped without application logs. Report known bad normal
+returns as an `autter.outcome` event with `autter.outcome.status=error`,
+stable `autter.outcome.name`, and short `autter.outcome.message`. Supported
+profilers can upload symbolized pprof to `/v1/profiles` with a server key;
+any caught exception hook remains opt in because handled throws are noisy.
+
 Autter Runtime's server ingest is standard **OTLP/HTTP** — nothing
 Autter-specific to install for languages without a dedicated style skill.
 Every mainstream OpenTelemetry SDK (Java, .NET, PHP, Ruby, Elixir, Kotlin,

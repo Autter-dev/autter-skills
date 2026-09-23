@@ -8,6 +8,15 @@ author: autter
 
 # Node.js / Next.js style
 
+For continuous detection, configure HTTP client, database, and queue
+instrumentations alongside the server tracker. HTTP 5xx and ERROR spans
+become issues even without logging. Use `reportOutcome(stableName, reason)`
+when a normally returning path produced a known bad result. A supported
+profiler can upload symbolized pprof to `/v1/profiles` using the Runtime
+server key, service, environment, and release headers. The optional
+`startCaughtExceptionSampler()` uses V8 Inspector and pauses at every throw;
+enable it only for targeted diagnosis, never as a default setup step.
+
 Autter ships first-party npm packages for Node — use them instead of hand-
 rolling raw OTel SDK setup.
 

@@ -8,10 +8,19 @@ author: autter
 
 # Autter Runtime Setup
 
+For continuous detection, inventory each service's HTTP framework, outbound
+clients, database driver, queue workers, and profiler. Wire available OTel
+instrumentations so traces explain time spent in dependencies, and set a
+deployment release SHA. The common outcome event, optional profile upload,
+and release keyed source maps are documented in Autter Runtime's
+`docs/CONTINUOUS-DETECTION.md`. Normal Runtime capture and qualified draft
+fixes are enabled by default; caught exception hooks require a separate
+service opt in because they observe expected throws as well.
+
 You are installing **Autter Runtime** — open-source error tracking and usage
 telemetry (github.com/Autter-dev/autter-runtime) — into the user's repository.
-Autter Runtime is deliberately just two credentials and three HTTP endpoints;
-everything else is language-specific sugar. That means you can wire it into
+Autter Runtime uses two key types and standard OTLP plus browser endpoints;
+optional profile and source-map uploads use the server key. That means you can wire it into
 **any** stack by following the right style guide below, even ones without a
 dedicated Autter package.
 

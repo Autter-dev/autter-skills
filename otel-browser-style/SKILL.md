@@ -8,6 +8,13 @@ author: autter
 
 # Browser / SPA / static site style
 
+The browser tracker now observes failed fetch and XHR requests, 5xx responses, long tasks,
+and slow resources by default. Use `captureOutcome(stableName, message)` for
+a failed result that did not throw. Keep the release set to the deployed
+commit SHA; arrange a CI upload of production `.js.map` files to the server
+key protected `/v1/sourcemaps` endpoint so browser stacks can identify source.
+Never put the server key or source maps in a public browser request.
+
 ```bash
 npm install @autter/runtime-browser
 ```

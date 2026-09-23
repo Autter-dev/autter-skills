@@ -8,6 +8,15 @@ author: autter
 
 # Go / Rust style
 
+For continuous detection, instrument outbound requests, database calls,
+and queue or job work, not only the inbound router. Mark failed spans ERROR
+and record exceptions where the SDK supports it; HTTP 5xx is grouped even
+without an exception event. For a known bad normal return, add an
+`autter.outcome` event with `autter.outcome.status=error`, stable
+`autter.outcome.name`, and short `autter.outcome.message`. A supported
+profiler may send symbolized pprof to `/v1/profiles` with a server key and
+service, environment, release headers. Caught exception sampling is opt in.
+
 There is no Autter package for Go or Rust — the ingester speaks standard
 OTLP/HTTP, so each language's own OTel SDK talks to it directly.
 
