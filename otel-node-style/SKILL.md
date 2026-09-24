@@ -27,7 +27,7 @@ and never hardcode it.
 ## Plain Node (Express, Fastify, Koa, NestJS, http)
 
 ```bash
-npm install @autter/runtime-node@^1.3.1
+npm install @autter/runtime-node@^1.3.2
 ```
 
 Reuse the existing initialization if present. Otherwise, create an instrumentation entry that loads **before** the app. Do not register a second SDK or provider.
@@ -245,7 +245,7 @@ follow.
 ## Next.js (any router)
 
 ```bash
-npm install @autter/runtime-next@^1.3.1
+npm install @autter/runtime-next@^1.3.2
 ```
 
 Three files:

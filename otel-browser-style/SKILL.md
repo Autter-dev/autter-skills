@@ -20,9 +20,9 @@ npm install @autter/runtime-browser
 ```
 
 `@autter/runtime-browser` is a zero-dependency tracker, under 5KB gzipped.
-It captures `window.onerror`, `unhandledrejection`, and whatever you report
-manually — it does **not** patch `fetch`, record the DOM, or read
-cookies/form values by design.
+It captures `window.onerror`, `unhandledrejection`, failed `fetch` and XHR
+requests, HTTP 5xx responses, and slow browser timings. It does not record
+the DOM or read cookies or form values.
 
 ## Decide: relay or direct — rank relays first
 

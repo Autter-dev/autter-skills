@@ -150,7 +150,7 @@ stable, low-cardinality span names; ids go in attributes.
 Endpoint regression detection is separate from the slow-process monitor. It compares request-duration histogram buckets, then opens an incident with normal and slow traces. The platform rollout does not change SDK settings in customer applications.
 
 - Inspect and reuse the existing SDK initialization and providers. Do not add a second SDK.
-- Use Node or Next.js SDK 1.3.0 or later. Prefer patch 1.3.1. Self-hosted ingesters require 1.3.1 or later.
+- Use Node or Next.js SDK 1.3.2 or later for continuous detection helpers. Self-hosted ingesters require 1.3.1 or later.
 - Set `release` to the deployed commit SHA. Keep service and environment names stable.
 - For Node and Next.js, add `retainTracesAboveMs: 2000` to the existing initialization when slow successful traces are needed. This is opt-in and can increase export volume. Keep normal trace sampling unchanged.
 - For external OTel, configure explicit-bucket delta histograms, an export interval of at most two minutes, route templates, HTTP methods, release, and a unique service instance ID. Check the installed SDK's exporter settings; environment-variable support differs by language.
