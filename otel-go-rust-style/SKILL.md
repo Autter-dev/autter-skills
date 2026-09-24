@@ -1,6 +1,6 @@
 ---
 name: otel-go-rust-style
-version: 1.2.0
+version: 1.2.1
 description: How to wire Autter Runtime into Go and Rust backends using each language's official OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
 tags: [autter, telemetry, go, rust, opentelemetry, llm]
 author: autter
@@ -28,6 +28,20 @@ Before setup, inspect and reuse existing providers and exporters. Do not initial
 
 For Go and Rust, configure the installed metric exporter's temporality selector for **delta**, not cumulative. Use explicit HTTP duration buckets and an export interval of at most two minutes. The general metric examples below need this exporter configuration before endpoint detection can use them. Check the API for the installed SDK version rather than assuming a shared environment variable.
 
+For memory pressure, use that same metric exporter and a unique
+`service.instance.id` for each process lifetime. Go's `runtime.MemStats`
+provides current `HeapAlloc` plus cumulative `NumGC` and `PauseTotalNs`;
+it does not provide process RSS or a container memory limit. Rust needs a
+process/allocator collector appropriate to the application. Emit the
+portable names and units in Runtime's `docs/MEMORY-PRESSURE.md` and forward
+platform OOM/restart events with the server key. Memory sums may be delta or
+cumulative; the delta requirement above applies to endpoint histograms.
+Self-hosted ingesters need 1.3.3+ for memory signals.
+Redeploy the Go/Rust service after wiring those instruments; exporter
+configuration alone does not produce process metrics. OOM/restart correlation
+requires an external ECS/Kubernetes event forwarder that reports the same
+process instance ID to `/v1/platform-events`.
+
 Include route templates, HTTP methods, the deployed commit SHA, stable service and environment names, and a unique service instance ID. Keep normal traces and configure supported slow-request retention where needed. The Node/Next.js `retainTracesAboveMs` option does not apply to Go or Rust. Add dependency child spans; do not calculate endpoint p95 from sampled traces.
 
 Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). The platform rollout does not change application settings. Fixes remain draft pull requests for human review. Use existing production telemetry for verification; run selftests only in an isolated test environment.
@@ -46,6 +60,7 @@ import (
     "os"
 
     "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/attribute"
     "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
     "go.opentelemetry.io/otel/sdk/resource"
     sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -64,6 +79,9 @@ func initObservability(ctx context.Context, serviceName string) (func(context.Co
     }
     res, _ := resource.New(ctx, resource.WithAttributes(
         semconv.ServiceName(serviceName),
+        attribute.String("service.instance.id", os.Getenv("AUTTER_RUNTIME_INSTANCE_ID")),
+        attribute.String("service.version", os.Getenv("GIT_SHA")),
+        attribute.String("deployment.environment.name", os.Getenv("DEPLOYMENT_ENVIRONMENT")),
     ))
     tp := sdktrace.NewTracerProvider(
         sdktrace.WithBatcher(exp),
@@ -138,6 +156,9 @@ fn init_observability(service_name: &str) -> anyhow::Result<opentelemetry_sdk::t
         )))
         .with_resource(opentelemetry_sdk::Resource::new(vec![
             opentelemetry::KeyValue::new("service.name", service_name.to_string()),
+            opentelemetry::KeyValue::new("service.instance.id", std::env::var("AUTTER_RUNTIME_INSTANCE_ID").unwrap_or_default()),
+            opentelemetry::KeyValue::new("service.version", std::env::var("GIT_SHA").unwrap_or_default()),
+            opentelemetry::KeyValue::new("deployment.environment.name", std::env::var("DEPLOYMENT_ENVIRONMENT").unwrap_or_default()),
         ]))
         .build();
 
@@ -180,7 +201,7 @@ usage rollups. Unsampled request stats — what the slow-process monitor
 uses for accurate HTTP coverage — come from the OTel HTTP-server duration
 histogram (`http.server.request.duration`, or the older
 `http.server.duration`; Autter's ingester folds exactly these two and
-ignores everything else), which only exists once a **meter provider** is
+does not treat memory gauges as request metrics), which only exists once a **meter provider** is
 registered.
 
 **Go** — add alongside the tracer provider; `otelhttp` then records the
@@ -208,6 +229,30 @@ mp := sdkmetric.NewMeterProvider(
 otel.SetMeterProvider(mp)
 // call mp.Shutdown(ctx) alongside the tracer shutdown
 ```
+
+Go can then add heap and GC measurements to that provider (after importing
+`runtime` and `go.opentelemetry.io/otel/metric` as `metric`):
+
+```go
+meter := otel.Meter("autter-process-memory")
+heap, _ := meter.Int64ObservableGauge("autter.process.memory.heap.used", metric.WithUnit("By"))
+gcCount, _ := meter.Int64ObservableCounter("autter.process.gc.count", metric.WithUnit("{collection}"))
+gcMs, _ := meter.Int64ObservableCounter("autter.process.gc.duration", metric.WithUnit("ms"))
+_, err = meter.RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
+    var stats runtime.MemStats
+    runtime.ReadMemStats(&stats)
+    observer.ObserveInt64(heap, int64(stats.HeapAlloc))
+    observer.ObserveInt64(gcCount, int64(stats.NumGC))
+    observer.ObserveInt64(gcMs, int64(stats.PauseTotalNs / 1_000_000))
+    return nil
+}, heap, gcCount, gcMs)
+if err != nil { return nil, err }
+```
+
+This provides heap-based growth detection without RSS. Add a current RSS
+gauge from an OS collector when container-pressure diagnosis is needed; do
+not substitute `HeapSys` for a limit. Configure the resource with a full
+release SHA and process instance ID, not just a service name.
 
 **Rust** — there is no ubiquitous HTTP-server metrics middleware; either
 record the histogram yourself in a small middleware, or tell the user

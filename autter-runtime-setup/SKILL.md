@@ -1,6 +1,6 @@
 ---
 name: autter-runtime-setup
-version: 1.3.0
+version: 1.3.1
 description: Install Autter Runtime (open-source error + usage + LLM telemetry) into a codebase, regardless of language or framework. Run this first — it inventories the repo, routes to the right style skill for each service, and records the instrumentation convention in the repo's agent-instruction files so new code stays instrumented.
 tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 author: autter
@@ -16,6 +16,24 @@ and release keyed source maps are documented in Autter Runtime's
 `docs/CONTINUOUS-DETECTION.md`. Normal Runtime capture and qualified draft
 fixes are enabled by default; caught exception hooks require a separate
 service opt in because they observe expected throws as well.
+
+For memory pressure in **every backend language**, inspect whether the
+existing OTel meter provider exports current process RSS or runtime heap.
+If it does not, add a gauge using the portable metric contract in Runtime's
+`docs/MEMORY-PRESSURE.md`; a trace exporter alone does not collect memory.
+Keep `service.instance.id` unique to each process lifetime and set the full
+release SHA. Node SDK 1.3.3+ emits these metrics automatically, while other
+stacks use their OTel SDK or a process collector. Add GC metrics only when
+the runtime exposes them. An ECS/Kubernetes event forwarder with the server
+key supplies OOM kills and restarts; the killed process cannot report them.
+Only an in-use heap profile with matching repository source can justify an
+automatic draft fix.
+Before telling the user memory incidents are live, check that the 1.3.3+
+ingester and the backend/frontend memory changes are deployed. A local branch
+or an npm release alone is not enough. Ensure each non-Node service actually
+emits the process gauge after application redeploy. If no ECS/Kubernetes
+forwarder is configured, explain that Runtime can detect metric-based pressure
+but cannot correlate an OOM kill or restart.
 
 You are installing **Autter Runtime** — open-source error tracking and usage
 telemetry (github.com/Autter-dev/autter-runtime) — into the user's repository.
@@ -154,6 +172,7 @@ Endpoint regression detection is separate from the slow-process monitor. It comp
 - Set `release` to the deployed commit SHA. Keep service and environment names stable.
 - For Node and Next.js, add `retainTracesAboveMs: 2000` to the existing initialization when slow successful traces are needed. This is opt-in and can increase export volume. Keep normal trace sampling unchanged.
 - For external OTel, configure explicit-bucket delta histograms, an export interval of at most two minutes, route templates, HTTP methods, release, and a unique service instance ID. Check the installed SDK's exporter settings; environment-variable support differs by language.
+- For memory incidents, ensure the metric exporter sends current RSS or heap gauges under the portable names in `docs/MEMORY-PRESSURE.md`. Check the actual metric payload for `service.instance.id` and the deployed full release SHA. A service without RSS can still be monitored using current heap usage. Do not relabel peak RSS, virtual memory, or reserved heap as current usage.
 - Add database and dependency child spans where needed. HTTP instrumentation alone does not measure all database work.
 - Do not calculate p95 from sampled or selectively retained traces. Missing historical histogram buckets and discarded traces cannot be recreated.
 

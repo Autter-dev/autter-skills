@@ -1,6 +1,6 @@
 ---
 name: otel-generic-style
-version: 1.2.0
+version: 1.2.1
 description: Fallback guide for wiring Autter Runtime into any backend language/framework not covered by a dedicated style skill (Java, .NET, PHP, Ruby, Elixir, Kotlin, etc.) using standard OpenTelemetry — errors, usage, and LLM tracing.
 tags: [autter, telemetry, opentelemetry, otlp, generic, llm]
 author: autter
@@ -15,6 +15,19 @@ returns as an `autter.outcome` event with `autter.outcome.status=error`,
 stable `autter.outcome.name`, and short `autter.outcome.message`. Supported
 profilers can upload symbolized pprof to `/v1/profiles` with a server key;
 any caught exception hook remains opt in because handled throws are noisy.
+
+For memory pressure in any backend language, enable a process/runtime metric
+instrument on the existing meter provider. Export **current** RSS or managed
+heap as an observable gauge with a `service.instance.id` unique to one
+process lifetime; use Runtime's portable names and units in
+`docs/MEMORY-PRESSURE.md`. Export GC counters only when that runtime supports
+them. An OTel exporter alone does not measure process memory. Forward
+ECS/Kubernetes OOM and restart events with a server key; an OOM proves
+exhaustion, not a leak. Self-hosted ingesters need 1.3.3+ for these signals.
+Redeploy the application after adding its memory instrument. Metric-based
+pressure detection can work without a platform forwarder; OOM/restart
+correlation cannot. Check that the ingester and backend/frontend memory
+changes are deployed before describing the feature as available to customers.
 
 Autter Runtime's server ingest is standard **OTLP/HTTP** — nothing
 Autter-specific to install for languages without a dedicated style skill.
@@ -55,7 +68,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.autter.dev
 OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer ${AUTTER_RUNTIME_KEY}"
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_SERVICE_NAME=<service name>
-OTEL_RESOURCE_ATTRIBUTES=service.version=${GIT_SHA},deployment.environment=production
+OTEL_RESOURCE_ATTRIBUTES=service.instance.id=${PROCESS_INSTANCE_ID},service.version=${GIT_SHA},deployment.environment.name=production
 OTEL_TRACES_SAMPLER=parentbased_traceidratio
 OTEL_TRACES_SAMPLER_ARG=0.01
 ```
@@ -79,11 +92,23 @@ Metrics ride the same env vars: SDKs with HTTP-server metric support
 (the Java agent and .NET's AspNetCore instrumentation emit
 `http.server.request.duration` out of the box) export to `/v1/metrics`
 automatically. That histogram — or the older `http.server.duration` — is
-the only instrument Autter folds into request rollups, and it's what
-gives the slow-process monitor unsampled HTTP coverage; custom
-instruments are accepted with a `200` but not stored. If the ecosystem's
+the only instrument Autter folds into request rollups. The portable process
+RSS/heap/GC metrics in `docs/MEMORY-PRESSURE.md` are stored separately for
+memory incidents. Other custom instruments are not stored. If the ecosystem's
 instrumentation doesn't emit it, say so to the user — their usage stats
 will be trace-derived (1%-sampled) instead.
+
+For JVM, `MemoryMXBean.getHeapMemoryUsage().getUsed()` supplies current heap
+and `.getMax()` the runtime heap limit; `GarbageCollectorMXBean` supplies
+cumulative collection count/time. For .NET, `Process.WorkingSet64` supplies
+RSS; `GC.GetGCMemoryInfo()` supplies managed heap evidence. PHP, Ruby,
+Elixir, Kotlin, Swift, and C++ can use their OTel meter API plus an OS or
+runtime process collector. Preserve the metric meanings: virtual memory,
+peak RSS, reserved heap, and allocation totals are not current RSS/heap.
+Set `PROCESS_INSTANCE_ID` separately for each worker; a pod UID alone does
+not distinguish container restarts or multiple workers. A missing RSS gauge
+is acceptable when current heap usage is available; Runtime can detect heap
+growth without RSS.
 
 ## Step 3: If the SDK needs explicit code instead of env vars
 

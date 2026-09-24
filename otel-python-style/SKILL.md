@@ -1,6 +1,6 @@
 ---
 name: otel-python-style
-version: 1.2.0
+version: 1.2.1
 description: How to wire Autter Runtime into Python backends (FastAPI, Flask, Django, plain WSGI/ASGI) using the standard OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
 tags: [autter, telemetry, python, fastapi, flask, django, opentelemetry, llm]
 author: autter
@@ -32,6 +32,19 @@ Inspect existing initialization first. Reuse its providers and exporters; do not
 
 The general setup below also needs explicit-bucket **delta** HTTP duration histograms for endpoint detection. Configure the installed metric exporter for delta temporality; do not leave its cumulative default unchanged. Export at most two minutes apart. Set route templates, HTTP methods, the deployed commit SHA, stable service and environment names, and a unique service instance ID.
 
+For memory pressure, the Python OTel exporter is only transport. Add a current
+RSS gauge from `psutil` (or an existing process metrics instrument) to the
+same meter provider using `autter.process.memory.rss`, unit `By`. Configure
+this inside each worker after fork, so `service.instance.id` identifies one
+process lifetime. See Runtime's `docs/MEMORY-PRESSURE.md` for the shared
+contract, supported GC counters, and OOM event forwarding. Do not map
+`resource.getrusage().ru_maxrss` or `tracemalloc` to current RSS.
+Self-hosted ingesters need 1.3.3+ for memory signals.
+Redeploy the Python workers after adding the gauge; an OTLP exporter alone
+does not start measuring RSS. Metric-based detection works without a platform
+forwarder, but OOM/restart correlation requires one that sends the matching
+process instance ID to `/v1/platform-events`.
+
 Keep normal trace sampling. Add slow-request retention only through a supported SDK or collector policy; `retainTracesAboveMs` is a Node/Next.js option, not a Python option. Capture database and dependency child spans for trace comparison. Do not infer p95 from sampled traces. The platform rollout does not change these application settings.
 
 Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). Draft fixes need human review. Verify with existing production telemetry, not artificial errors or requests. Run any selftest below only in an isolated test environment.
@@ -40,6 +53,7 @@ Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https
 
 ```bash
 pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+pip install psutil  # only when using the RSS gauge below
 # Framework auto-instrumentation (pick what matches):
 pip install opentelemetry-instrumentation-fastapi   # FastAPI
 pip install opentelemetry-instrumentation-flask     # Flask
@@ -58,7 +72,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.autter.dev
 OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer ${AUTTER_RUNTIME_KEY}"
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_SERVICE_NAME=<service name>
-OTEL_RESOURCE_ATTRIBUTES=service.version=${GIT_SHA},deployment.environment=production
+OTEL_RESOURCE_ATTRIBUTES=service.instance.id=${PROCESS_INSTANCE_ID},service.version=${GIT_SHA},deployment.environment.name=production
 OTEL_TRACES_SAMPLER=parentbased_traceidratio
 OTEL_TRACES_SAMPLER_ARG=0.01
 ```
@@ -68,21 +82,27 @@ opentelemetry-instrument python app.py
 # or: opentelemetry-instrument gunicorn app:app
 ```
 
+Only use the environment resource ID when the deployment supplies a distinct
+`PROCESS_INSTANCE_ID` to **each worker**. With a prefork server and one shared
+environment value, configure the resource after fork in worker startup instead.
+
 This auto-instruments whatever frameworks it detects (FastAPI, Flask,
 requests, urllib, psycopg2, etc.) with zero code changes. Prefer this when
 the user wants the least invasive setup.
 
-Metrics ride along for free on this path: `opentelemetry-instrument`
+HTTP metrics ride along on this path: `opentelemetry-instrument`
 also wires a meter provider from the same env vars, and the framework
 instrumentations emit the `http.server.duration` histogram — the one
 instrument Autter folds into unsampled request rollups (and what gives
-the slow-process monitor accurate HTTP coverage).
+the slow-process monitor accurate HTTP coverage). It does not guarantee a
+process memory gauge; add the gauge below if no existing instrument emits it.
 
 ## Explicit setup (when the user wants code they can see/modify)
 
 ```python
 # observability.py
 import os
+import uuid
 
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
@@ -95,7 +115,12 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 
 def init_observability(service_name: str, api_key: str):
-    resource = Resource.create({"service.name": service_name})
+    resource = Resource.create({
+        "service.name": service_name,
+        "service.instance.id": os.environ.get("AUTTER_RUNTIME_INSTANCE_ID") or str(uuid.uuid4()),
+        "service.version": os.environ.get("GIT_SHA", ""),
+        "deployment.environment.name": os.environ.get("DEPLOYMENT_ENVIRONMENT", "production"),
+    })
     headers = {"authorization": f"Bearer {api_key}"}
 
     # 1% of successful traces. Reading the ratio from the standard env var
@@ -130,8 +155,28 @@ def init_observability(service_name: str, api_key: str):
     return provider
 ```
 
-Call `init_observability(...)` once, before the app starts serving traffic
-(top of `main.py` / `app.py`, or in an ASGI lifespan startup hook) — and
+Add this after the meter provider is registered in each worker. It uses the
+same exporter and does not initialize another SDK:
+
+```python
+import psutil
+from opentelemetry import metrics
+from opentelemetry.metrics import Observation
+
+process = psutil.Process()
+metrics.get_meter("autter-process-memory").create_observable_gauge(
+    "autter.process.memory.rss",
+    callbacks=[lambda options: [Observation(process.memory_info().rss)]],
+    unit="By",
+)
+```
+
+For OOM correlation, set `AUTTER_RUNTIME_INSTANCE_ID` to a platform ID that
+the ECS/Kubernetes event forwarder can report. Each worker needs a distinct
+ID; a pod UID alone is insufficient for multiple workers or restarts.
+
+Call `init_observability(...)` once per process, before it starts serving
+traffic (after fork in prefork servers, or in an ASGI lifespan startup hook) — and
 **before** the framework instrumentor runs, since instrumentors bind to
 whatever providers are registered at instrument time.
 

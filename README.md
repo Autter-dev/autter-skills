@@ -50,6 +50,7 @@ Autter Runtime's ingester uses two key types and these HTTP endpoints:
 | `POST /v1/browser` | compact JSON (`@autter/runtime-browser` payload) |
 | `POST /v1/profiles` | symbolized pprof (server key only) |
 | `POST /v1/sourcemaps` | release-keyed source map JSON (server key only) |
+| `POST /v1/platform-events` | ECS/Kubernetes OOM and restart JSON (server key only) |
 
 Any language with an OpenTelemetry SDK can send server telemetry — that's
 every mainstream language. Only Node.js and the browser get dedicated
@@ -57,6 +58,14 @@ first-party npm packages (`@autter/runtime-node`, `@autter/runtime-browser`,
 `@autter/runtime-next`); everything else is a thin style guide over the
 standard OTel SDK for that language, which `otel-generic-style` covers even
 when no dedicated skill exists yet.
+
+Memory pressure uses that same OTLP metric endpoint in every backend
+language. The Node package exports process metrics automatically; other
+stacks enable a process meter or add the portable RSS/heap gauges described
+in [Runtime's memory contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/MEMORY-PRESSURE.md).
+The feature also needs the 1.3.3+ ingester and Autter backend/frontend
+deployment. Applications must be redeployed after instrumentation changes;
+OOM/restart correlation requires an ECS/Kubernetes event forwarder.
 
 ## Getting an ingest key
 

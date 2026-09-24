@@ -1,6 +1,6 @@
 ---
 name: otel-node-style
-version: 1.2.0
+version: 1.2.1
 description: How to wire Autter Runtime into Node.js backends (Express, Fastify, Koa, NestJS, plain http) and Next.js using the official @autter/runtime-node and @autter/runtime-next packages — errors, usage, and LLM tracing.
 tags: [autter, telemetry, nodejs, nextjs, express, opentelemetry, llm]
 author: autter
@@ -16,6 +16,17 @@ profiler can upload symbolized pprof to `/v1/profiles` using the Runtime
 server key, service, environment, and release headers. The optional
 `startCaughtExceptionSampler()` uses V8 Inspector and pauses at every throw;
 enable it only for targeted diagnosis, never as a default setup step.
+
+The Node tracker at version 1.3.3+ exports per-instance memory and GC metrics
+automatically. Other languages use the same `/v1/metrics` OTLP contract with
+their own OTel SDK; do not install this Node package in a non-Node service.
+Customers must upgrade and redeploy their Node application to get these
+metrics; a platform deployment does not update an installed SDK. The 1.3.3+
+ingester and the backend/frontend memory feature must also be deployed.
+Preserve its `service.instance.id` for each process lifetime when forwarding
+ECS/Kubernetes OOM and restart events to `/v1/platform-events`. Heap profiles are optional and must
+carry the same instance ID and release. An OOM means exhaustion; call a leak
+suspected only when post-GC heap evidence supports it.
 
 Autter ships first-party npm packages for Node — use them instead of hand-
 rolling raw OTel SDK setup.
