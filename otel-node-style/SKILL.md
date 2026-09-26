@@ -1,6 +1,6 @@
 ---
 name: otel-node-style
-version: 1.2.1
+version: 1.2.2
 description: How to wire Autter Runtime into Node.js backends (Express, Fastify, Koa, NestJS, plain http) and Next.js using the official @autter/runtime-node and @autter/runtime-next packages — errors, usage, and LLM tracing.
 tags: [autter, telemetry, nodejs, nextjs, express, opentelemetry, llm]
 author: autter
@@ -300,9 +300,13 @@ object, or add an App Router route alongside if the app is hybrid.
 
 ```tsx
 "use client";
-import { initAutterBrowser, AutterErrorBoundary } from "@autter/runtime-next";
+import { initAutterBrowser, AutterErrorBoundary } from "@autter/runtime-next/client";
 
-initAutterBrowser({ endpoint: "/api/autter-runtime", service: "<app name>" });
+initAutterBrowser({
+  endpoint: "/api/autter-runtime",
+  service: "<app name>",
+  release: "<deployed commit SHA>",
+});
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return <AutterErrorBoundary>{children}</AutterErrorBoundary>;
@@ -312,6 +316,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
 Mount `<AutterErrorBoundary>` near the root layout so it catches render
 errors app-wide — `window.onerror` does **not** fire for React render
 errors, so skipping this boundary silently misses them.
+Also follow `otel-browser-style` for enforced CSP violation capture,
+fixed `data-autter-action` labels on important controls, `connect-src`
+for the relay, and browser-side verification. Check the installed
+`@autter/runtime-browser` dependency actually supports these features;
+an older locked transitive version will not gain them automatically.
 
 ## Defaults you should know (don't change without asking)
 

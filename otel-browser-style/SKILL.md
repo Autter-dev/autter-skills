@@ -1,14 +1,14 @@
 ---
 name: otel-browser-style
-version: 1.0.0
-description: How to wire Autter Runtime into browser apps (React, Vue, Svelte, Angular, vanilla SPA, static sites) using the official @autter/runtime-browser package.
+version: 1.1.0
+description: Wire Autter Runtime into browser apps, including CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
 tags: [autter, telemetry, browser, react, spa, error-tracking]
 author: autter
 ---
 
 # Browser / SPA / static site style
 
-The browser tracker now observes failed fetch and XHR requests, 5xx responses, long tasks,
+The browser tracker observes enforced CSP violations, failed fetch and XHR requests, 5xx responses, long tasks,
 and slow resources by default. Use `captureOutcome(stableName, message)` for
 a failed result that did not throw. Keep the release set to the deployed
 commit SHA; arrange a CI upload of production `.js.map` files to the server
@@ -19,10 +19,51 @@ Never put the server key or source maps in a public browser request.
 npm install @autter/runtime-browser
 ```
 
+Use a published version whose `AutterBrowserOptions` includes
+`captureActions` and whose event types include `csp_violation`. Check the
+installed package, not just the dependency range or lockfile. If that release
+is unavailable, keep the rest of setup working and report CSP/action capture
+as pending; do not claim the new behavior is live. A self-hosted ingester must
+also accept `csp_violation` browser events.
+
 `@autter/runtime-browser` is a zero-dependency tracker, under 5KB gzipped.
-It captures `window.onerror`, `unhandledrejection`, failed `fetch` and XHR
+It captures `window.onerror`, `unhandledrejection`, enforced
+`securitypolicyviolation`, failed `fetch` and XHR
 requests, HTTP 5xx responses, and slow browser timings. It does not record
-the DOM or read cookies or form values.
+DOM text or read cookies or form values.
+
+## Capture the action preceding a failure
+
+Action capture is on by default. The SDK stores the last click on a button,
+link, or button-like control, or form submit, for up to 30 seconds and attaches
+it to failures. It records element type and path-only route; it does not read
+button text, form values, hrefs, or arbitrary ids. This is recent context,
+not a causal claim. Do not add a separate all-click `trackEvent` loop.
+
+While wiring the app, add stable `data-autter-action` labels to the few
+controls that initiate important workflows or commonly fail. For example:
+
+```tsx
+<button data-autter-action="send-email" onClick={sendEmail}>Send</button>
+```
+
+Use fixed labels from source code, never user input or generated ids. Preserve
+existing handlers, keyboard behavior, and accessible names. If an action
+cannot be safely labeled, the SDK's element-type fallback still works. Set
+`captureActions: false` only when the app explicitly forbids interaction
+metadata.
+
+## Check the app's Content Security Policy
+
+The CSP error must be collected by the SDK, but capturing it does not make
+the blocked script safe or fix the policy. Inspect the actual CSP header or
+meta tag and the blocked resource. Permit a script only when it is intended
+and trusted; do not weaken `default-src` to hide a violation. For telemetry,
+`connect-src` must permit the same-origin relay (`'self'`) or the direct
+ingester origin (`https://otlp.autter.dev`). Add the narrow entry to an
+existing `connect-src` directive or create one if `default-src 'none'` would
+otherwise block the POST. Check that the built app actually loads the SDK;
+server instrumentation alone cannot observe browser CSP events.
 
 ## Decide: relay or direct — rank relays first
 
@@ -34,6 +75,7 @@ secret server key. SDK init in modes 1–3 is always:
 initAutterBrowser({
   endpoint: "/api/autter-runtime", // same-origin relay route
   service: "<app name>",
+  release: "<deployed commit SHA>",
 });
 ```
 
@@ -119,7 +161,7 @@ manually anywhere you catch something yourself.
 ## API surface
 
 ```ts
-initAutterBrowser({ endpoint, clientKey?, service, environment?, release?, sessionTracking?, beforeSend? });
+initAutterBrowser({ endpoint, clientKey?, service, environment?, release?, sessionTracking?, captureActions?, captureNetworkFailures?, captureTimings?, beforeSend? });
 captureException(error, context?);       // report a caught error
 captureMessage(message, severity?, context?); // warning/info without an exception — severity "fatal"|"error"|"warning"|"info", default "warning"
 trackEvent(name, props?);                 // coarse usage counter — no PII in props
@@ -136,23 +178,29 @@ templates (numbers are normalised out server-side) and PII-free.
 
 `props`/`context` values must be primitives or small objects — never pass
 emails, form fields, cookies, or request/response bodies through
-`setUser`/`setContext`/`trackEvent`; the package doesn't scrub these for
-you (it's explicitly zero-dep, no PII redaction layer).
+`setUser`/`setContext`/`trackEvent`; the package masks obvious sensitive keys
+and email strings, but that is defense in depth rather than permission to
+send personal data.
 
-## Selftest (console — nothing to install or clean up)
+## Selftest in an isolated environment
 
-After init, run this in the devtools console (any page where the tracker
-is loaded) to exercise both event families and force the send:
+Add a temporary development-only call after init to exercise both event
+families and force the send. Remove it after verification; package imports
+are not automatically available as globals in DevTools. In Next.js, import
+these functions from `@autter/runtime-next/client` instead:
 
-```js
+```ts
+import { captureMessage, trackEvent, flush } from "@autter/runtime-browser";
 captureMessage("autter selftest", "info"); // error/warning pipeline
 trackEvent("autter_selftest");             // usage-metrics pipeline
 flush();                                   // skip the batch window
 ```
 
-Modes 1–3 (relay): verify with one `captureException` selftest instead:
+For relay modes, a temporary handled exception can additionally prove the
+error route:
 
-```js
+```ts
+import { captureException, flush } from "@autter/runtime-browser";
 captureException(new Error("autter selftest")); // error pipeline via relay
 flush();
 ```
@@ -164,14 +212,18 @@ flush();
    modes 1–3) or `/v1/browser` (mode 4) and comes back `202` — body
    `{"accepted":N}` from the ingester; a relay replies `202`
    immediately and forwards in the background.
-3. The selftest proves init + transport, not the automatic hooks — so
-   also trigger one real error (throw inside a component render, or
-   `Promise.reject(new Error("test"))` in the console) and confirm
-   another request fires within ~500ms (errors flush fast — 500ms
-   debounce, not the normal 5s batch window).
-4. Direct-key mode only: a `403` here means the current origin isn't on
+3. The selftest proves init + transport, not the automatic hooks. In an
+   isolated test environment, click a labeled test control and trigger a
+   handled error; confirm the resulting occurrence has `autter.action` and
+   an age of at most 30 seconds. Inspect the outbound payload to confirm it
+   contains no DOM text, field values, query strings, or full URLs.
+4. In that same isolated environment, use an intentional CSP block or an
+   existing violation and confirm a `csp_violation` event is accepted and
+   appears as a `CspViolation` issue. Do not create a production violation.
+   If the console shows a block but no POST, check SDK init and `connect-src`.
+5. Direct-key mode only: a `403` here means the current origin isn't on
    the key's allow-list — check it was registered with the exact origin
    (scheme + host + port) the app is running on.
-5. Ground truth in the dashboard (~1–2 min): one info-severity
+6. Ground truth in the dashboard (~1–2 min): one info-severity
    "autter selftest" issue and a usage counter `event:autter_selftest` —
    both clearly named; the user can resolve or ignore them.

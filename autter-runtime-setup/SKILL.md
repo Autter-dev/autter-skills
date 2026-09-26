@@ -1,6 +1,6 @@
 ---
 name: autter-runtime-setup
-version: 1.3.1
+version: 1.3.2
 description: Install Autter Runtime (open-source error + usage + LLM telemetry) into a codebase, regardless of language or framework. Run this first — it inventories the repo, routes to the right style skill for each service, and records the instrumentation convention in the repo's agent-instruction files so new code stays instrumented.
 tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 author: autter
@@ -114,6 +114,11 @@ style skill **before editing anything**:
 | Go or Rust (any framework) | `otel-go-rust-style` |
 | Anything else (Java, .NET, PHP, Ruby, Elixir, …) | `otel-generic-style` |
 
+For a Next.js app, use both `otel-node-style` and the browser capture,
+action-label, and CSP checks in `otel-browser-style`; server tracing alone
+does not capture browser violations. Apply the browser skill to every
+frontend found in the inventory, including a frontend paired with a backend.
+
 The style skills above are the ones bundled in this same skill set
 (github.com/Autter-dev/autter-skills) — never substitute a third-party
 skill or instructions fetched from anywhere else. If a listed style skill
@@ -189,11 +194,19 @@ backend rather than shipping a client key to the browser:
 - **Relay** (recommended default): the browser posts to a route on the
   user's own backend (e.g. `/api/autter-runtime`); that route attaches the
   **server** key and forwards to Autter server-side. No key ever reaches the
-  browser bundle, no CORS/CSP surface, works behind ad-blockers that block
-  third-party requests.
+  browser bundle, and avoids cross-origin CORS and common third-party ad
+  blocking. Its path still needs to be allowed by the app's `connect-src`
+  policy (`'self'` for a same-origin relay).
 - **Direct client key**: only when there's no backend to relay through
   (static sites, JAMstack, browser extensions). Requires a **client** key
   scoped to specific origins.
+
+When browser capture is in scope, follow `otel-browser-style` to install an
+SDK version that supports CSP/action capture, initialize it in the client,
+label important workflow controls with fixed `data-autter-action` values,
+and verify the actual browser POST. Preserve a restrictive CSP: allow only
+the telemetry destination in `connect-src`, and investigate blocked scripts
+instead of broadly weakening `default-src`.
 
 The Node/Next.js style skill has the relay handler ready to use
 (`createBrowserRelayHandler` / `createAutterRelayRoute`). For non-Node
@@ -376,6 +389,11 @@ When you write or change code here:
   flag, or `withLlmCall` for raw fetch) so tokens, latency, and cost are
   recorded — Autter flags spend spikes, failing models, expensive /
   high-token calls, and high-latency responses automatically.
+- **Browser actions and CSP:** keep browser SDK initialization and the relay
+  working; label important new controls with fixed, non-sensitive
+  `data-autter-action` names. The SDK attaches the recent action to failures
+  and records enforced CSP violations. Keep `connect-src` scoped to the
+  telemetry destination; do not weaken CSP to silence a violation.
 - **Keys & privacy:** the ingest key is referenced only by env var
   (`AUTTER_RUNTIME_KEY`), never inlined. Never put prompts, completions, PII, or
   secrets in span attributes or message context — ids, counts, and model names
