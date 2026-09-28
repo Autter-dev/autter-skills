@@ -31,5 +31,5 @@ Project IDs are currently entered manually. Datadog retains supplied trace conte
 
 For self-hosted platform deployments, verify the API and independent collector/analysis workers share a persistent `CONNECTOR_ENCRYPTION_KEY` and that the existing GitHub/AI fix runner is deployed. Never rotate that key casually: existing encrypted connections depend on it.
 
-Public setup guide: https://docs.autter.dev/runtime/external-sources
+Public setup guide: https://github.com/Autter-dev/docs/blob/main/runtime/external-sources.mdx
 Runtime repository reference: https://github.com/Autter-dev/autter-runtime/blob/main/docs/EXTERNAL-SOURCES.md
