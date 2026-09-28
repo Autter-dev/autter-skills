@@ -1,9 +1,10 @@
 ---
 name: autter-runtime-setup
-version: 1.3.2
-description: Install Autter Runtime (open-source error + usage + LLM telemetry) into a codebase, regardless of language or framework. Run this first — it inventories the repo, routes to the right style skill for each service, and records the instrumentation convention in the repo's agent-instruction files so new code stays instrumented.
-tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
-author: autter
+description: Set up repository-scoped Autter Runtime using application instrumentation, external log providers, or both. Inventory services, configure the chosen ingestion path, and verify stored evidence, root cause analysis, and eligible draft fixes.
+metadata:
+  version: "1.4.0"
+  author: autter
+  tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 ---
 
 # Autter Runtime Setup
@@ -42,7 +43,21 @@ optional profile and source-map uploads use the server key. That means you can w
 **any** stack by following the right style guide below, even ones without a
 dedicated Autter package.
 
-## Step 0: Get an ingest key
+## Choose the ingestion path
+
+Use the user's requested path. For existing Sentry, PostHog, Grafana/Loki,
+Datadog or webhook logs, read [External sources](references/external-sources.md)
+and configure **Repository → Settings → Runtime → Data sources**. This path
+runs in the platform: it does not require an SDK install, an OTLP ingester
+change, or an `AUTTER_RUNTIME_KEY` in the application. Provider credentials
+and private webhook URLs are separate from Runtime ingest keys and CLI PATs.
+
+Use the SDK/OTel steps below when instrumenting application code. If the user
+wants both paths, preserve existing telemetry and explain that SDK/provider
+events do not share an automatic cross-source deduplication guarantee.
+Do not apply the ingest-key question below to a connector-only setup.
+
+## Step 0: Get an ingest key (SDK/OTel path)
 
 Autter Runtime needs one ingest key per repository to authenticate
 telemetry. **You never need the key's value — only the name of the env var

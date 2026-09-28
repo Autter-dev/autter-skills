@@ -93,3 +93,7 @@ Full docs: [github.com/Autter-dev/autter-runtime](https://github.com/Autter-dev/
 ## License
 
 MIT
+
+## Connect existing provider logs
+
+`autter-runtime-setup` also supports repository-scoped Sentry, PostHog, Grafana/Loki, Datadog and webhook sources. Ask the agent to connect the chosen source in repository Runtime settings and verify stored logs, RCA and eligible draft fixes. Connector-only setup does not require an application SDK or a Runtime ingest key. See [external-source guidance](autter-runtime-setup/references/external-sources.md).
