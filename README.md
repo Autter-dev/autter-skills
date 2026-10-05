@@ -1,9 +1,10 @@
 # Autter Skills
 
-AI agent skills that set up [Autter](https://autter.dev) for you — wire
-[Autter Runtime](https://github.com/Autter-dev/autter-runtime) — open-source
-error tracking, usage telemetry, and LLM tracing — into any codebase,
-regardless of language or framework.
+AI agent skills that connect your codebase to [Autter](https://autter.dev).
+Give coding agents repository wiki, learnings, and architecture context through
+MCP, or wire [Autter Runtime](https://github.com/Autter-dev/autter-runtime) —
+open-source error tracking, usage telemetry, and LLM tracing — into any
+codebase, regardless of language or framework.
 
 Drop these into Claude Code, Cursor, Codex, or any editor that supports the
 [Agent Skills standard](https://agentskills.io) and start using them
@@ -17,6 +18,9 @@ npx skills add Autter-dev/autter-skills --all
 
 Then tell your agent what you want:
 
+- **"Use Autter's wiki and learnings to understand this repo before coding."** —
+  runs `autter-repo-context`, which reads the repository's wiki, accepted
+  learnings, and indexed architecture through the authenticated Autter MCP.
 - **"use the skills to install Autter Runtime in this project."** — runs
   `autter-runtime-setup`, which inventories your repo and routes each
   service to the right style skill automatically — you don't need to pick
@@ -28,6 +32,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 
 | Skill | Covers |
 | --- | --- |
+| [`autter-repo-context`](./autter-repo-context/) | Reads repository wiki Markdown, accepted process learnings and team rules, and indexed code/architecture/run commands through Autter MCP. Uses source commits and freshness metadata to ground coding work in how your platform works and how it is built. |
 | [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories the repo (including which services call LLM APIs), gets an ingest key set up, routes each service to the right style skill below, verifies with a key preflight plus a temporary selftest path that proves every wired pipeline — traces/errors, metrics, **and** (where wired) a fake LLM test trace — per service, then records the error + info instrumentation convention in the repo's agent-instruction files (`CLAUDE.md` / `AGENTS.md` / Cursor / Copilot) so new code stays instrumented. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including CSP violations and privacy-conscious recent action context. |
@@ -35,7 +40,21 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 | [`otel-go-rust-style`](./otel-go-rust-style/) | Go and Rust backends, via each language's official OTel SDK. |
 | [`otel-generic-style`](./otel-generic-style/) | Everything else — Java, .NET, PHP, Ruby, Elixir, Kotlin, … — via standard OTLP/HTTP + OTel env vars. |
 
-## Why this works for any language
+## Repository knowledge through MCP
+
+Connect your agent to `https://api.autter.dev/mcp` with OAuth and select the
+organization containing your repository. Repository knowledge reads require
+`mcp:read`; they do not require a Runtime ingest key or an SDK install.
+`autter-repo-context` uses `whoami` to match the repository, `get_wiki` for
+stored pages, `get_learnings` for accepted conventions, and `get_repo_index`
+for implementation evidence. It checks stored freshness against the current
+checkout and reports missing sources explicitly.
+
+The `get_wiki` tool requires a backend deployment that includes it. Refresh
+the client's MCP tool list after that deployment. If it is unavailable, the
+skill continues with exposed learnings/index tools and local source code.
+
+## Why Runtime works for any language
 
 Autter Runtime's ingester uses two key types and these HTTP endpoints:
 
