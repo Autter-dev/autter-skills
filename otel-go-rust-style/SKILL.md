@@ -1,12 +1,41 @@
 ---
 name: otel-go-rust-style
-version: 1.2.1
-description: How to wire Autter Runtime into Go and Rust backends using each language's official OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
-tags: [autter, telemetry, go, rust, opentelemetry, llm]
-author: autter
+description: Wire Autter Runtime into Go and Rust backends using their OpenTelemetry SDKs. Configure errors, usage, LLM tracing and optional OTLP logs; verify exporters and stored evidence.
+metadata:
+  version: "1.3.0"
+  tags: [autter, telemetry, go, rust, opentelemetry, llm, logging]
+  author: autter
 ---
 
 # Go / Rust style
+
+## Structured logs and operation evidence
+
+Check deployed `/v1/logs` support and migration `0011-runtime-logs` first.
+Use the installed language SDK's logs provider/processor/exporter: a trace
+exporter alone does not send logs. Go logging needs a compatible bridge for
+the logger in use (such as `slog`); Rust needs compatible `tracing`/log bridging
+and OTLP logging support. Check current package APIs and reuse existing provider
+ownership; do not replace the application logger or install Node APIs.
+
+Send OTLP/HTTP logs with the server Runtime key and the same service,
+environment and release resource. Include active trace/span IDs where the
+bridge supports them. Ordinary error/warning logs remain diagnostics; keep
+exception/ERROR/failed `autter.outcome` traces for issue capture. For custom
+operation summaries, follow the
+[operation contract](https://docs.autter.dev/runtime/operation-logging#other-languages-and-existing-otlp-loggers)
+and share captured operation IDs with traces explicitly. A workflow ID or
+timestamp match is insufficient for automatic linking.
+
+Scrub context before export; configure bounded queues, retries, and shutdown
+flush in the language SDK or collector. Node limits do not apply to these
+exporters. Verify stored messages/context/trace IDs in **Runtime → Logs**
+independently from traces, metrics and LLM calls. Run synthetic verification
+only in isolated tests; inspect existing production records. Matching platform
+readers/fix worker must be deployed; unavailable storage is not empty healthy
+telemetry. Refresh evidence or rerun RCA if logs arrive later.
+
+## Detection and telemetry
 
 For continuous detection, instrument outbound requests, database calls,
 and queue or job work, not only the inbound router. Mark failed spans ERROR
@@ -112,10 +141,10 @@ span.SetStatus(codes.Error, err.Error())
 Do this in error-handling middleware so every handler gets it for free,
 rather than sprinkling it through business logic.
 
-**Reporting warnings** — same mechanism, plus an `autter.severity`
-attribute on the exception event; Autter stores it in the errors table
-with `severity: warning` so it groups/aggregates like an error without
-being counted as one:
+**Intentional warning issues** — add `autter.severity` to an exception event
+only when that warning needs issue grouping. Ordinary diagnostics and recovered
+failures use the logs pipeline above; do not mark successful spans ERROR just
+to export a log:
 
 ```go
 span.AddEvent("exception", trace.WithAttributes(
@@ -123,7 +152,6 @@ span.AddEvent("exception", trace.WithAttributes(
     attribute.String("exception.message", "legacy /orders lookup used"),
     attribute.String("autter.severity", "warning"), // fatal|error|warning|info
 ))
-span.SetStatus(codes.Error, "deprecated path") // ERROR status makes the ingester pick it up
 ```
 
 ## Rust

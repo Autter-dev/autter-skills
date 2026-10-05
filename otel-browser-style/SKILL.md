@@ -1,12 +1,20 @@
 ---
 name: otel-browser-style
-version: 1.1.0
 description: Wire Autter Runtime into browser apps, including CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
-tags: [autter, telemetry, browser, react, spa, error-tracking]
-author: autter
+metadata:
+  version: "1.1.1"
+  tags: [autter, telemetry, browser, react, spa, error-tracking]
+  author: autter
 ---
 
 # Browser / SPA / static site style
+
+Server operation logging is a separate Node/OTLP feature. Keep browser capture
+on `/v1/browser`; client keys cannot send `/v1/logs`. Do not import
+`runtimeLogger` or `withRuntimeOperation` from Node/Next.js server packages
+into a browser bundle or edge relay. Next.js client components keep
+`@autter/runtime-next/client`; instrument customer server operations with
+`otel-node-style` only where the Node runtime and installed release support it.
 
 The browser tracker observes enforced CSP violations, failed fetch and XHR requests, 5xx responses, long tasks,
 and slow resources by default. Use `captureOutcome(stableName, message)` for

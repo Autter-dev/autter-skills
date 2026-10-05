@@ -1,9 +1,10 @@
 ---
 name: otel-python-style
-version: 1.2.1
-description: How to wire Autter Runtime into Python backends (FastAPI, Flask, Django, plain WSGI/ASGI) using the standard OpenTelemetry SDK — errors, usage, and LLM tracing; no Autter-specific package needed.
-tags: [autter, telemetry, python, fastapi, flask, django, opentelemetry, llm]
-author: autter
+description: Wire Autter Runtime into Python backends using the standard OpenTelemetry SDK. Configure errors, usage, LLM tracing and optional OTLP logs; verify exporters and stored evidence.
+metadata:
+  version: "1.3.0"
+  tags: [autter, telemetry, python, fastapi, flask, django, opentelemetry, llm, logging]
+  author: autter
 ---
 
 # Python style
@@ -27,6 +28,35 @@ documents first).
 ## Install
 
 Inspect existing initialization first. Reuse its providers and exporters; do not add a second SDK.
+
+## Structured logs and operation evidence
+
+Check the deployed ingester supports `/v1/logs` and migration
+`0011-runtime-logs` before enabling log export. Configure the installed Python
+SDK's logs provider, batch processor, OTLP/HTTP log exporter and a `logging`
+bridge. In a prefork server, initialize them per worker after fork. Reuse
+existing logging and provider ownership; exporter environment variables alone
+do not install a logging bridge. The Python logs API varies by SDK version,
+so check its installed signatures rather than inventing imports.
+
+Use the server Runtime key, shared service/environment/release resource and
+active trace/span context. Export to the ingester's `/v1/logs`; ordinary
+warnings/error logs are diagnostic records, not automatically grouped issues.
+Keep exception and failed `autter.outcome` trace events for issue capture.
+Do not install Node logging APIs or imitate their async-local implementation.
+For custom operation summaries, follow the
+[operation contract](https://docs.autter.dev/runtime/operation-logging#other-languages-and-existing-otlp-loggers)
+and explicitly share captured operation IDs with traces. Queue workflow IDs
+alone do not create that link.
+
+Scrub structured context before export, preserve bounded retry/buffer settings,
+and await logs and trace/metric flushing on worker shutdown or short-lived jobs.
+Configure these limits in Python/your collector; Node's buffer/retry limits do
+not apply to external exporters. Verify stored logs, context and trace IDs in
+**Runtime → Logs** separately from trace/metric/LLM verification. Use only
+isolated test traffic; inspect existing production telemetry. Missing storage
+is unavailable, not evidence of a healthy empty service. The platform readers
+and fix worker need a matching deployment; logs may arrive after initial RCA.
 
 ## Endpoint regression requirements
 
@@ -216,13 +246,13 @@ defect stays one issue across re-deploys (line numbers are ignored) and two
 different defects that share a message stay separate. Keep the traceback on
 the event; do not strip it.
 
-## Reporting warnings
+## Intentional warning issues
 
 Autter stores warnings alongside errors with a `severity` column
 (`fatal | error | warning | info`) — declared via the `autter.severity`
-attribute on the exception event. Use this for warning-worthy paths
-(deprecations, degraded dependencies, recoverable failures) so they can
-be aggregated later without being counted as errors:
+attribute on the exception event. Use this only when the warning intentionally
+needs issue grouping. Ordinary deprecations, retries, and recovered failures
+belong in the logs pipeline described above:
 
 ```python
 with tracer.start_as_current_span("orders.legacy_lookup") as span:
@@ -231,11 +261,11 @@ with tracer.start_as_current_span("orders.legacy_lookup") as span:
         "exception.message": "Legacy /orders lookup used",
         "autter.severity": "warning",
     })
-    span.set_status(trace.Status(trace.StatusCode.ERROR, "deprecated path"))
 ```
 
-(The ERROR status is what makes the ingester pick it up; `autter.severity`
-downgrades it to a warning in storage.) Keep messages as stable templates
+The exception event creates an occurrence; `autter.severity` assigns warning
+severity. Do not mark an otherwise successful span ERROR just to export a log.
+Keep messages as stable templates
 — ids and numbers are normalised out server-side for grouping — and never
 include PII.
 
