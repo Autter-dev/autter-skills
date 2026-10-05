@@ -1,12 +1,19 @@
 ---
 name: otel-node-style
-version: 1.2.2
-description: How to wire Autter Runtime into Node.js backends (Express, Fastify, Koa, NestJS, plain http) and Next.js using the official @autter/runtime-node and @autter/runtime-next packages — errors, usage, and LLM tracing.
-tags: [autter, telemetry, nodejs, nextjs, express, opentelemetry, llm]
-author: autter
+description: Wire Autter Runtime into Node.js and Next.js using the official packages. Check installed logging support, configure operations and diagnostic logs, and verify errors, usage, and LLM tracing.
+metadata:
+  version: "1.3.0"
+  tags: [autter, telemetry, nodejs, nextjs, express, opentelemetry, llm, logging]
+  author: autter
 ---
 
 # Node.js / Next.js style
+
+Read [Operation logging setup](references/operation-logging.md) before wiring
+diagnostic logs or business operations. It covers release/deployment checks,
+nested context, explicit outcomes, existing loggers, flush and stored evidence.
+The APIs require SDK and ingester **1.4.0+**; neither `latest` nor a package
+version in the source establishes that they are published or deployed.
 
 For continuous detection, configure HTTP client, database, and queue
 instrumentations alongside the server tracker. HTTP 5xx and ERROR spans
@@ -38,7 +45,7 @@ and never hardcode it.
 ## Plain Node (Express, Fastify, Koa, NestJS, http)
 
 ```bash
-npm install @autter/runtime-node@^1.3.2
+npm install @autter/runtime-node@^1.4.0
 ```
 
 Reuse the existing initialization if present. Otherwise, create an instrumentation entry that loads **before** the app. Do not register a second SDK or provider.
@@ -47,7 +54,7 @@ Reuse the existing initialization if present. Otherwise, create an instrumentati
 // instrument.cjs
 const { initAutterServer } = require("@autter/runtime-node");
 
-initAutterServer({
+const server = initAutterServer({
   apiKey: process.env.AUTTER_RUNTIME_KEY,
   service: "<pick a name — e.g. the package/app name>",
   environment: "production",
@@ -98,28 +105,25 @@ Uncaught exceptions and unhandled rejections that crash the process are
 captured automatically via `process.on("uncaughtExceptionMonitor", ...)` —
 no extra code needed, this is wired inside `initAutterServer`.
 
-### Capturing warnings (not just errors)
+### Diagnostic messages and issue-producing events
 
-Autter stores warnings/info in the same table as errors with a `severity`
-column, so they group and aggregate identically. When you see meaningful
-warning-worthy moments in the code — deprecated code paths, degraded
-dependencies, recoverable failures, suspicious slowness — wire them up
-with `captureMessage`:
+After confirming operation-logging support, use structured logs for ordinary
+info/warnings, retries, and recovered failures. Preserve the existing logger
+and add selected Runtime calls where their context helps investigation:
 
 ```js
-const { captureMessage } = require("@autter/runtime-node");
+const { createRuntimeLogger } = require("@autter/runtime-node");
 
-captureMessage("Legacy /orders lookup used", "warning", { client: req.get("x-client-id") });
-// severity: "fatal" | "error" | "warning" | "info" (default "warning")
+const log = createRuntimeLogger({ component: "orders" });
+log.warn("Order lookup used fallback", { dependency: { name: "cache", attempts: 2 } });
 ```
 
-Good places to add these while instrumenting: existing `console.warn` /
-`logger.warn` call sites with real diagnostic value (add `captureMessage`
-alongside them — don't remove the log), deprecation branches, retry/
-fallback paths, and catch blocks that swallow errors. Prefer stable
-message templates ("cache degraded to 40%" is fine — numbers are
-normalised out server-side) and never put PII in the message or
-attributes.
+These records appear in **Runtime → Logs**, separately from issues.
+`runtimeLogger.error` does not automatically create an issue. Keep
+`captureException` for handled exceptions and `captureMessage` for messages
+that intentionally need severity-tagged issue grouping. Prefer stable
+messages and bounded, non-sensitive context. If the logging release is
+unavailable, keep existing capture APIs working and report diagnostics as pending.
 
 ### Instrumenting slow processes (jobs, consumers, crons)
 
@@ -146,6 +150,10 @@ went. Use stable, low-cardinality names (`"email.digest"`, not
 `"email.digest:user-123"` — put ids in attributes). Instrument the repo's
 background jobs, queue consumers, and scheduled tasks this way while
 wiring the service; ask before instrumenting more than the obvious ones.
+
+Use `withRuntimeOperation` instead of a second span wrapper when the same job
+needs measured steps and a business outcome. Follow the operation reference;
+an operation that returns normally can still declare a failed result.
 
 ### LLM calls (Vercel AI SDK, OpenAI, Anthropic, …)
 
@@ -218,12 +226,21 @@ and a daily LLM digest lands in the org's notifications — no extra setup.
 ### Graceful shutdown
 
 ```js
-const server = initAutterServer({ ... });
+// Reuse the handle returned by the one existing initialization.
 process.on("SIGTERM", async () => {
-  await server.shutdown();
-  process.exit(0);
+  // Drain application work first using its existing shutdown hook.
+  try {
+    await server.shutdown();
+  } catch (error) {
+    console.error("Runtime shutdown could not deliver all telemetry", error);
+    process.exitCode = 1;
+  }
 });
 ```
+
+Preserve the application's existing signal/exit handling. Short-lived jobs
+should await `flushRuntimeLogs()` and the existing trace/metric lifecycle flush
+before completion. Do not shut down a shared SDK after each web request.
 
 ### Relaying browser telemetry through this backend
 
@@ -256,7 +273,7 @@ follow.
 ## Next.js (any router)
 
 ```bash
-npm install @autter/runtime-next@^1.3.2
+npm install @autter/runtime-next@^1.4.0
 ```
 
 Three files:
@@ -266,7 +283,7 @@ Three files:
 ```ts
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { registerAutter } = await import("@autter/runtime-next");
+    const { registerAutter } = await import("@autter/runtime-next/server");
     registerAutter({
       apiKey: process.env.AUTTER_RUNTIME_KEY!,
       service: "<app name>",
@@ -285,7 +302,7 @@ version and add `experimental: { instrumentationHook: true }` if missing).
 **2. `app/api/autter-runtime/route.ts`** (browser relay — App Router):
 
 ```ts
-import { createAutterRelayRoute } from "@autter/runtime-next";
+import { createAutterRelayRoute } from "@autter/runtime-next/server";
 
 export const { POST } = createAutterRelayRoute({
   apiKey: process.env.AUTTER_RUNTIME_KEY!,
@@ -345,38 +362,74 @@ an older locked transitive version will not gain them automatically.
 
 Use this path only in a local or isolated test environment. Do not generate artificial production errors or traffic. Inspect existing production telemetry instead.
 
-To prove both pipelines end-to-end — traces/errors AND metrics — add a
+To verify traces/errors, metrics, and supported operation logs, add a
 throwaway route, hit it once, then delete it. Never commit or deploy it;
 it's an unauthenticated endpoint that triggers telemetry sends.
 
 ```js
 const {
-  withProcessSpan,
-  captureMessage,
+  withRuntimeOperation,
+  runtimeLogger,
+  flushRuntimeLogs,
   emitLlmSelftestTrace,
 } = require("@autter/runtime-node");
 
 // TEMPORARY autter selftest — delete after verification.
-app.get("/__autter-selftest", async (_req, res) => {
-  await withProcessSpan("autter.selftest", async () => {
-    captureMessage("autter selftest", "info");
-  });
-  // Only when the service is wired for LLM tracing:
-  const llm = await emitLlmSelftestTrace();
-  res.json({ ok: true, llmTraceId: llm.traceId });
+app.get("/__autter-selftest", async (_req, res, next) => {
+  try {
+    let failedOperationId;
+    let succeededOperationId;
+    await withRuntimeOperation("autter.selftest.checkout", async (operation) => {
+      failedOperationId = operation.id;
+      await operation.step("reserve_inventory", async () => undefined);
+      const payment = await operation.step("confirm_payment", async () => ({ confirmed: false, attempts: 2 }));
+      operation.setContext({ inventory: { reserved: true }, payment });
+      runtimeLogger.info("autter selftest payment result", { payment });
+      operation.outcome("failed", "autter selftest payment not confirmed");
+    });
+    await withRuntimeOperation("autter.selftest.checkout", async (operation) => {
+      succeededOperationId = operation.id;
+      await operation.step("reserve_inventory", async () => undefined);
+      await operation.step("confirm_payment", async () => ({ confirmed: true, attempts: 1 }));
+      await operation.step("create_order", async () => undefined);
+    });
+    // Only when the service is wired for LLM tracing:
+    const llm = await emitLlmSelftestTrace();
+    await flushRuntimeLogs(); // rejects on failed log delivery
+    res.json({ failedOperationId, succeededOperationId, llmTraceId: llm.traceId });
+  } catch (error) {
+    next(error); // expose a failed flush through the app's existing error handler
+  }
 });
 ```
 
-Next.js: same body in a temporary `app/api/autter-selftest/route.ts`,
-importing `withProcessSpan`, `captureServerMessage`, and
-`emitLlmSelftestTrace` from `@autter/runtime-next` and returning
-`Response.json({ ok: true, llmTraceId })`.
+Next.js: same body in a temporary Node route (`export const runtime = "nodejs"`),
+importing the logging and LLM APIs from `@autter/runtime-next/server` and
+returning `Response.json({ failedOperationId, succeededOperationId, llmTraceId })`.
+Remove the LLM call/response field for services without LLM instrumentation.
+Use this variant only after the logging capability check passes; otherwise
+verify the existing trace/metric setup and report logs as pending.
+
+If logging support is pending, use this body in the temporary route instead:
+
+```js
+const { withProcessSpan, captureMessage } = require("@autter/runtime-node");
+await withProcessSpan("autter.selftest", async () => {
+  captureMessage("autter selftest", "info");
+});
+```
+
+For that fallback, expect the info-severity selftest issue and request metrics;
+add the fake LLM call only for an LLM-wired service. Next.js uses
+`withProcessSpan` and `captureServerMessage` from `@autter/runtime-next/server`.
+Report logs/operation evidence as pending, not verified.
 
 One `curl` of the route exercises everything at once:
 
-- the `autter.selftest` process span and the info message ride the
-  **always-on** error pipe — never sampled out, flushed within ~2s —
-  proving `/v1/traces` and the error/warning path;
+- the declared failed outcome rides the **always-on** trace pipe and produces
+  an issue; stored evidence proves the trace/issue path;
+- the structured message and two operation summaries use `/v1/logs`; confirm
+  stored rows, context and captured operation/trace IDs separately;
 - the request itself is recorded by the HTTP instrumentation's
   `http.server.duration` histogram — the instrument Autter folds into
   request rollups — proving `/v1/metrics` on the next export;
@@ -410,9 +463,14 @@ One `curl` of the route exercises everything at once:
      -d "{\"version\":1,\"service\":\"selftest\",\"environment\":\"development\",\"events\":[{\"type\":\"message\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"severity\":\"info\",\"message\":\"autter selftest\"}]}"
    ```
 
-5. Ground truth in the dashboard (~1–2 min): an `autter.selftest` span,
-   one info-severity "autter selftest" issue, and request metrics for
-   `/__autter-selftest`.
+5. Ground truth in the dashboard: a failed `autter.selftest.checkout` issue,
+   the info message and both summaries in **Runtime → Logs**, linked
+   **Operation evidence**, and request metrics for `/__autter-selftest`.
+   Use the returned operation IDs, not timestamp proximity. Check a matching
+   successful comparison when the platform supports it; refresh or rerun
+   analysis if the logs arrive later. A relay `202` only confirms acceptance;
+   confirm a stored browser event separately. Follow the operation reference
+   for unavailable/empty sources and delivery limits.
 6. LLM-wired services: the selftest response's `llmTraceId` call shows up
    under **Runtime → LLM** as provider/model `autter-selftest` (self-hosted:
    a `runtime_llm_calls` row with that `trace_id`). Traces arriving without

@@ -1,12 +1,49 @@
 ---
 name: otel-generic-style
-version: 1.2.1
-description: Fallback guide for wiring Autter Runtime into any backend language/framework not covered by a dedicated style skill (Java, .NET, PHP, Ruby, Elixir, Kotlin, etc.) using standard OpenTelemetry — errors, usage, and LLM tracing.
-tags: [autter, telemetry, opentelemetry, otlp, generic, llm]
-author: autter
+description: Set up Autter Runtime for backend languages without a dedicated style skill using OpenTelemetry. Configure errors, usage, LLM tracing and optional OTLP logs, with capability and stored-evidence checks.
+metadata:
+  version: "1.3.0"
+  tags: [autter, telemetry, opentelemetry, otlp, generic, llm, logging]
+  author: autter
 ---
 
 # Generic / any-language style
+
+## Structured logs and operation evidence
+
+Check deployed `/v1/logs` support and migration `0011-runtime-logs` before
+configuring logs. Use that language's installed logs SDK or an existing
+OpenTelemetry Collector with a logs pipeline. A trace exporter or setting
+`OTEL_EXPORTER_OTLP_ENDPOINT` does not create a logger bridge/logs provider.
+Check its supported OTLP/HTTP log exporter and bridge APIs; reuse the existing
+logger/providers and scrub records before export.
+
+When supported by the installed exporter, configure:
+
+```bash
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://otlp.autter.dev/v1/logs
+OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_LOGS_HEADERS="authorization=Bearer ${AUTTER_RUNTIME_KEY}"
+```
+
+Use the server Runtime key, shared service/environment/release resource and
+active trace/span IDs. Preserve exception and failed `autter.outcome` trace
+events for issue capture; ordinary error logs do not create issues. Custom
+operation summaries follow the
+[operation contract](https://docs.autter.dev/runtime/operation-logging#other-languages-and-existing-otlp-loggers).
+Propagate captured operation IDs into both logs and traces; a custom workflow
+ID or timestamp proximity does not create automatic evidence links. Node's
+`withRuntimeOperation` API is not available in other languages.
+
+Set bounded queues/retries and await log and trace/metric flushes on graceful
+shutdown or short-lived work using that SDK/collector's lifecycle. Node limits
+do not apply to external exporters. Verify stored messages, context and trace
+IDs in **Runtime → Logs**, independently from traces, metrics and LLM calls.
+Use synthetic tests only in isolation, existing traffic in production. The
+platform readers/fix worker also need the matching deployment. An unavailable
+source is not a healthy empty source; refresh evidence/rerun RCA for later logs.
+
+## Detection and telemetry
 
 For continuous detection, enable available HTTP, dependency, database, and
 background worker instrumentations. ERROR spans, exception events, and
@@ -151,13 +188,12 @@ stack on the event; do not strip or truncate it away. If a language is not
 one Autter parses directly, a structured stack still groups by a templated
 signature rather than collapsing every same-message error into one issue.
 
-**Warnings**: add an `autter.severity` attribute (`"fatal" | "error" |
-"warning" | "info"`) to the exception event. Autter stores warnings in the
-same table as errors with that severity, so they group and aggregate
-identically without inflating error counts. Use it for deprecations,
-recoverable failures, and degraded-dependency paths; keep messages
-PII-free and template-stable (numbers/ids are normalised out server-side
-for grouping).
+**Intentional warning issues**: when a warning needs issue grouping, add
+`autter.severity` (`"fatal" | "error" | "warning" | "info"`) to its exception
+event. That event creates an occurrence with the selected severity. Ordinary
+deprecations, retries and recovered failures use the logs pipeline above.
+Do not mark successful spans ERROR or fabricate an exception for every log.
+Keep issue messages PII-free and template-stable for grouping.
 
 ## Step 5: Sampling guidance
 

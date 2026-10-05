@@ -3,7 +3,7 @@
 AI agent skills that connect your codebase to [Autter](https://autter.dev).
 Give coding agents repository wiki, learnings, and architecture context through
 MCP, or wire [Autter Runtime](https://github.com/Autter-dev/autter-runtime) —
-open-source error tracking, usage telemetry, and LLM tracing — into any
+open-source error tracking, diagnostic logs, usage telemetry, and LLM tracing — into any
 codebase, regardless of language or framework.
 
 Drop these into Claude Code, Cursor, Codex, or any editor that supports the
@@ -33,7 +33,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 | Skill | Covers |
 | --- | --- |
 | [`autter-repo-context`](./autter-repo-context/) | Reads repository wiki Markdown, accepted process learnings and team rules, and indexed code/architecture/run commands through Autter MCP. Uses source commits and freshness metadata to ground coding work in how your platform works and how it is built. |
-| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories the repo (including which services call LLM APIs), gets an ingest key set up, routes each service to the right style skill below, verifies with a key preflight plus a temporary selftest path that proves every wired pipeline — traces/errors, metrics, **and** (where wired) a fake LLM test trace — per service, then records the error + info instrumentation convention in the repo's agent-instruction files (`CLAUDE.md` / `AGENTS.md` / Cursor / Copilot) so new code stays instrumented. |
+| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, checks installed and deployed capabilities, configures the chosen ingestion path, verifies stored traces/errors, metrics, logs/operations and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including CSP violations and privacy-conscious recent action context. |
 | [`otel-python-style`](./otel-python-style/) | FastAPI, Flask, Django, plain WSGI/ASGI, via the standard OpenTelemetry Python SDK. |
@@ -60,12 +60,13 @@ Autter Runtime's ingester uses two key types and these HTTP endpoints:
 
 | Credential | Lives in | Can |
 | --- | --- | --- |
-| Server key `autter_rt_…` | backend env vars | send OTLP traces/metrics, relay browser events |
+| Server key `autter_rt_…` | backend env vars | send OTLP traces/metrics/logs, relay browser events |
 | Client key `autter_rtc_…` | frontend bundles (publishable) | send browser events only, origin-restricted |
 
 | Endpoint | Format |
 | --- | --- |
 | `POST /v1/traces`, `POST /v1/metrics` | OTLP/HTTP — protobuf or JSON |
+| `POST /v1/logs` | OTLP/HTTP logs — protobuf or JSON; requires the operation-logging ingester release |
 | `POST /v1/browser` | compact JSON (`@autter/runtime-browser` payload) |
 | `POST /v1/profiles` | symbolized pprof (server key only) |
 | `POST /v1/sourcemaps` | release-keyed source map JSON (server key only) |
@@ -108,6 +109,27 @@ The setup skills cover request histograms, release identity, and trace compariso
 Enabling detection in the platform does not update customer SDKs. Incident feedback lets a team mark a diagnosis as correct, incorrect, or expected. Fixes remain draft pull requests for human review. Production verification uses existing telemetry; selftests belong only in isolated test environments.
 
 Full docs: [github.com/Autter-dev/autter-runtime](https://github.com/Autter-dev/autter-runtime).
+
+## Structured logs and customer operations
+
+The setup skills check installed SDK exports and deployed ingestion before
+using `runtimeLogger`, `createRuntimeLogger`, or `withRuntimeOperation`.
+Operation logging requires Node/Next.js SDK and ingester **1.4.0+**; an existing
+`latest` install or `1.3.x` range alone does not establish support. The ingester needs
+`/v1/logs` and migration `0011-runtime-logs`; the platform backend, fix worker
+and frontend need the corresponding evidence deployment. Release ingester
+first, SDKs next, then platform consumers, and redeploy customer applications.
+
+Node/Next.js setup adds stable operation names, nested context, measured steps
+and explicit business outcomes to selected checkout/job paths. It preserves
+existing loggers, separates diagnostics from issue capture, and checks flushing
+and stored evidence. Other backend languages use their OTel logs exporter and
+logger bridge. Browser/edge capture keeps its own APIs and endpoint.
+
+Read [Node operation setup](otel-node-style/references/operation-logging.md)
+or [customer logging docs](https://docs.autter.dev/runtime/operation-logging).
+Logs improve the evidence available to RCA and eligible draft fixes; they do
+not prove a diagnosis or a working fix. Delivery is best effort.
 
 ## License
 

@@ -1,8 +1,8 @@
 ---
 name: autter-runtime-setup
-description: Set up repository-scoped Autter Runtime using application instrumentation, external log providers, or both. Inventory services, configure the chosen ingestion path, and verify stored evidence, root cause analysis, and eligible draft fixes.
+description: Set up repository-scoped Autter Runtime using application instrumentation, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
 metadata:
-  version: "1.4.0"
+  version: "1.5.0"
   author: autter
   tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 ---
@@ -147,14 +147,49 @@ defaults (sampling, error capture, the relay pattern) that generic
 knowledge won't have.
 
 **Errors AND warnings.** Autter stores warnings/info alongside errors
-(same table, `severity` column) so they aggregate identically later. While
-wiring a service, also instrument its warning-worthy paths — deprecated
-code paths, retry/fallback branches, catch blocks that swallow errors,
-`logger.warn` calls with real diagnostic value — using that stack's
-warning mechanism from the style skill (`captureMessage` in the JS
-packages, the `autter.severity` attribute in raw OTel stacks). Ask the
-user before adding more than a handful; a few high-signal warnings beat
-blanketing every log line.
+when intentionally captured as issue-producing events. Ordinary diagnostic
+messages now belong in the separate `/v1/logs` pipeline, not fabricated
+exceptions. For Node/Next.js, use `runtimeLogger` or `createRuntimeLogger`
+after checking installed support; raw OTel stacks need a logs provider/exporter
+and logger bridge. Preserve `captureException` and intentional `captureMessage`
+events, or equivalent trace events, for issue grouping. Instrument selected
+retry/fallback and recovered-failure paths without copying every existing log.
+
+### Operation logging and evidence
+
+Read the Node style skill's `references/operation-logging.md` for Node/Next.js;
+for other backends follow their OTLP logs section and the
+[logging contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/OPERATION-LOGGING.md).
+
+- Verify the installed package exports and deployed `/v1/logs` support first.
+  Node/Next.js operation APIs and the ingester require **1.4.0+**; do not claim `latest`
+  or the existing source version contains them. If unavailable, complete the
+  supported setup and report logs/operation evidence as pending.
+- Self-hosted ingestion needs `0011-runtime-logs`; platform backend, fix worker
+  and frontend need the matching operation-evidence deployment. Order rollout:
+  ingester, SDK release/application redeploy, then platform consumers.
+- Initialize once before application startup. Next.js logging uses
+  `@autter/runtime-next/server` in the Node runtime; browser/edge apps keep
+  their existing lightweight capture APIs.
+- Wrap meaningful customer operations (checkout, queue job, scheduled work)
+  with stable names, measured steps and bounded nested context. Convert a
+  matching `withProcessSpan` wrapper rather than nesting duplicate boundaries.
+- A returned callback defaults to success. Declare `failed`, `degraded`,
+  `cancelled` or `pending` when needed; a payment rejection after retries must
+  not look successful just because it did not throw. A step measures thrown
+  failure, not business acceptance. Recovered step errors may be successful.
+- `runtimeLogger.error` is a diagnostic record, not automatic issue capture.
+  Thrown operation errors use the trace pipeline; declared failed outcomes
+  emit `autter.outcome`. Avoid double-capturing the same exception.
+- Preserve existing loggers and providers. Choose stdout behavior through
+  `logging.console`; `logging.minLevel` filters messages, not summaries.
+  Runtime does not automatically forward all Pino/Winston records.
+- Context/trace IDs are local to the operation; pass safe workflow IDs through
+  queue payloads explicitly. Similar timestamps or custom workflow IDs alone
+  do not establish an operation-evidence link.
+- Await logs and the existing trace/metric flush at the end of short-lived
+  invocations, and shutdown after draining long-running services. Report
+  delivery failures and buffered/dropped records. Telemetry is best effort.
 
 **LLM calls.** Autter records every LLM/GenAI call with model, tokens,
 latency, and a USD cost — then watches for spend spikes, failing models,
@@ -247,6 +282,10 @@ metrics — were actually wired in. Don't declare success on one signal
 alone: a service can happily export traces while its metrics pipe is dead
 (or vice versa), and each has its own failure modes.
 
+When logging is configured, verify its independent third pipeline as well:
+stored messages, operation summaries, and issue-linked evidence. A successful
+trace export or a console line does not prove logs arrived.
+
 ### 4a. Preflight the key and endpoint (no app needed)
 
 If the env var is set in the shell, check the ingester directly —
@@ -266,6 +305,12 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST \
   https://otlp.autter.dev/v1/metrics \
   -H "Authorization: Bearer $AUTTER_RUNTIME_KEY" \
   -H "Content-Type: application/json" -d '{"resourceMetrics":[]}'
+
+# When server operation logging is requested:
+curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+  https://otlp.autter.dev/v1/logs \
+  -H "Authorization: Bearer $AUTTER_RUNTIME_KEY" \
+  -H "Content-Type: application/json" -d '{"resourceLogs":[]}'
 ```
 
 The empty payloads are deliberate: they authenticate and return
@@ -274,6 +319,8 @@ never pollutes the project's data. Failure meanings: `401` key
 missing/invalid; `403` a client key was used for OTLP (client keys can
 only send `/v1/browser`); `429` rate limit tripped; `503` ingester
 storage down (retry later).
+For `/v1/logs`, `404` indicates a missing route/deployment. Empty requests
+do not establish that `runtime_logs` storage or platform readers are ready.
 
 Browser-only setups (client key, no backend) preflight `/v1/browser`
 instead, with the origin the key was registered for:
@@ -290,14 +337,15 @@ curl -s -X POST https://otlp.autter.dev/v1/browser \
 ### 4b. Selftest path per service
 
 Each style skill has a **Selftest path** section: a temporary, clearly
-named test hook (route `/__autter-selftest`, span `autter.selftest`,
-message "autter selftest" at severity `info`, browser event
-`autter_selftest`) that exercises the pipelines in one shot. Add it,
+named test hook (route `/__autter-selftest`, operation `autter.selftest.checkout`
+or span `autter.selftest`, browser event `autter_selftest`) that exercises
+the applicable pipelines. Add it,
 start the service locally (or ask the user to), trigger it once, and
 confirm **every applicable signal** per the style skill's Verify steps:
 
-1. **Observability**: a `/v1/traces` export succeeded carrying the
-   selftest span and the info-severity message occurrence.
+1. **Observability**: confirm the stored trace and captured issue. With Node
+   operation logging, the selftest declares a failed business outcome; ordinary
+   info logs are not issue occurrences.
 2. **Metrics**: a `/v1/metrics` export succeeded (server stacks — the
    selftest request itself feeds the HTTP duration instrument), or the
    browser payload came back `202` (browser apps).
@@ -309,6 +357,12 @@ confirm **every applicable signal** per the style skill's Verify steps:
    span per their style skill. Confirm the call appears under **Runtime →
    LLM** (or a `runtime_llm_calls` row when self-hosting) before trusting
    that real model calls will be tracked.
+4. **Logs and operations** (when configured): confirm a structured message,
+   a failed operation summary, and a matching successful summary in **Runtime
+   → Logs**. Verify nested context, steps, outcomes, service/environment/release,
+   and captured trace/operation IDs. Confirm the failed issue's **Operation
+   evidence** separately. Refresh or rerun analysis for later arrivals. An
+   unavailable source and an empty available source are different results.
 
 Two things the style skills handle that you shouldn't improvise around:
 
@@ -328,18 +382,17 @@ surface the gap to the user rather than passing the selftest on traces
 alone: without it, usage stats fall back to 1%-sampled trace rollups and
 the slow-process monitor loses accurate HTTP coverage for that service.
 
-Final ground truth is the dashboard: the service shows an
-`autter.selftest` span, one info-severity "autter selftest" issue,
-(server stacks) request metrics for the selftest route, and (LLM-wired
-services) one `autter-selftest` LLM call within ~1–2 minutes. Everything
-the selftest created is greppable
-(`autter-selftest` / `autter.selftest` / `autter_selftest`) and groups
-under that one clearly named issue, which the user can resolve or ignore.
+Final ground truth is stored telemetry in the dashboard, scoped to the intended
+repository and environment. Follow the style skill's expected signals rather
+than requiring every ordinary log to create an issue. Confirm operations/logs,
+trace-linked failure evidence, request metrics, and LLM calls independently
+where configured. Successful comparison samples are investigation leads, not
+proof of health, a root cause, or a working fix.
 
 ### 4c. Remove the selftest path
 
 The selftest is scaffolding, not a feature: **delete the route/snippet
-once both signals are confirmed**, before any commit, push, or deploy.
+once the applicable signals are checked**, before any commit, push, or deploy.
 It's an unauthenticated endpoint that triggers telemetry sends — left in
 production it invites junk data and rate-limit burn. Revert any temporary
 verification overrides (sampling raised to 100%, shortened metric
@@ -372,9 +425,10 @@ Rules for the edit:
   tool-agnostic one) and do it only if the user agrees. Never create four
   parallel files; one is enough, and never touch files outside the project.
 - **Match the repo's stack**: name the actual package/functions the style
-  skill wired (`captureException` / `captureMessage` for the JS packages, the
-  `autter.severity` attribute for raw-OTel stacks) rather than the generic
-  wording, and drop the LLM and browser lines when they don't apply.
+  skill wired (`captureException`, `runtimeLogger`, `withRuntimeOperation` for
+  supported JS installs; logs exporters and trace events for raw OTel stacks).
+  Drop logging/operation lines if capability is pending, and LLM/browser lines
+  when they don't apply. Do not record uninstalled APIs as repo conventions.
 
 Block to write (adjust the function names to the stack you wired):
 
@@ -382,7 +436,7 @@ Block to write (adjust the function names to the stack you wired):
 <!-- autter-runtime:begin -->
 ## Autter Runtime instrumentation (keep new code instrumented)
 
-This repo reports errors, usage, and LLM telemetry to Autter Runtime. Keep new
+This repo reports errors, diagnostic logs, operations, usage, and LLM telemetry to Autter Runtime. Keep new
 code at the same coverage as the code instrumented during setup — do not add
 functions that can fail silently.
 
@@ -390,15 +444,23 @@ When you write or change code here:
 
 - **Errors:** every function that can throw either lets an already-instrumented
   boundary catch it, or captures the handled exception itself
-  (`captureException(err, context)`) — never swallow an error in a bare
-  `catch {}` without recording it.
-- **Info / warnings:** emit a severity-tagged event at genuinely diagnostic
+  (`captureException(err, context)`). A thrown operation error is already
+  captured by its boundary; avoid a duplicate capture. Record recovered errors
+  as diagnostics where useful, without making every recovery a grouped issue.
+- **Info / warnings:** emit a structured diagnostic log at useful
   points — deprecated paths, retry/fallback branches, degraded results,
-  guard-rail rejections — with `captureMessage(msg, "warning" | "info", context)`.
+  guard-rail rejections — with `runtimeLogger.info/warn(message, context)`.
+  `runtimeLogger.error` is also a diagnostic record; retain `captureMessage`
+  only for intentional issue-producing messages.
   Favour a few high-signal events over one per log line.
-- **Recurring work:** wrap background jobs, queue consumers, and cron ticks in a
-  process span (`withProcessSpan(name, fn)`) with a stable, low-cardinality name
-  so the slow-process monitor can see them (HTTP routes are covered already).
+- **Operations:** wrap meaningful requests, jobs, consumers, and cron ticks with
+  `withRuntimeOperation(name, fn, context)`, stable names and measured steps.
+  Declare failed/degraded/cancelled/pending results explicitly: a returned
+  callback defaults to success. Nested context is bounded; arrays replace.
+  Await steps, and propagate safe workflow IDs explicitly across queues.
+- **Delivery:** preserve the existing shutdown hook. Flush logs and trace/metric
+  exporters before short-lived work ends; report failures and dropped records.
+  Do not shut down shared telemetry after each request or treat it as an audit log.
 - **LLM calls:** route every model call through the wired LLM tracer
   (`instrumentLlmClient` for provider SDKs, the Vercel AI SDK telemetry
   flag, or `withLlmCall` for raw fetch) so tokens, latency, and cost are
@@ -428,6 +490,10 @@ Tell the user, concisely:
 
 - Which services got server telemetry (OTel traces/metrics) vs. browser
   telemetry (errors/usage) vs. both.
+- Which services have structured logs and operation summaries, which SDK and
+  deployed capabilities were verified, and which upgrades/redeploys are pending.
+  Distinguish stored logs, linked evidence, completed analysis, and a validated
+  fix; neither a log nor a queued fix is proof of successful remediation.
 - Whether browser events go through a relay or direct client key, and why.
 - What env var(s) they still need to fill in (if the key wasn't available
   yet).
@@ -445,14 +511,14 @@ Tell the user, concisely:
   Incidents**, with an automated optimization analysis and, when a safe
   optimization exists, an automated fix PR — no extra setup beyond the
   instrumentation just added.
-- Which services passed the selftest on **both** pipelines
-  (traces/errors and metrics), that the selftest path and any temporary
+- Which services passed the selftest on their configured pipelines
+  (traces/errors, metrics, and logs/operations where supported), that the selftest path and any temporary
   overrides were removed — and, if a raw-OTel service was left without a
   metrics pipe, that its usage stats are trace-derived (1% sampled) until
   a meter provider is added.
 - Which agent-instruction file(s) you recorded the instrumentation
   convention in (`CLAUDE.md` / `AGENTS.md` / Cursor / Copilot), so new code
-  keeps the same error + info coverage going forward.
+  keeps the configured diagnostic/operation coverage going forward.
 
 ## Hard rules
 
