@@ -46,8 +46,8 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 Connect your agent to `https://api.autter.dev/mcp` with OAuth and select the
 organization containing your repository. Repository knowledge reads require
 `mcp:read`; they do not require a Runtime ingest key or an SDK install.
-`autter-repo-context` uses `whoami` to match the repository, `get_memory` for the
-signed-in user's notes, `get_wiki` for stored pages, `get_learnings` for
+`autter-repo-context` uses `whoami` to match the repository, `get_memory` for
+every member's notes in the organization, `get_wiki` for stored pages, `get_learnings` for
 accepted conventions, and `get_repo_index` for implementation evidence. It
 checks stored freshness against the current checkout and reports missing
 sources explicitly.

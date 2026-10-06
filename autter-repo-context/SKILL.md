@@ -1,6 +1,6 @@
 ---
 name: autter-repo-context
-description: Use Autter MCP to retrieve the signed-in user's memory, a repository's wiki, accepted learnings, and indexed code context before implementing, debugging, or explaining that repository. Grounds coding work in how the user works and how the platform is built.
+description: Use Autter MCP to retrieve this organization's memory, a repository's wiki, accepted learnings, and indexed code context before implementing, debugging, or explaining that repository. Grounds coding work in how the team works and how the platform is built.
 license: MIT
 ---
 
@@ -9,8 +9,9 @@ license: MIT
 Use the customer's repository knowledge stored in Autter to understand product
 behavior, architecture, and team conventions for the current coding task.
 Combine it with the current checkout; the wiki is generated documentation and
-the index is a stored snapshot. Memory is the signed-in user's own notes,
-edited in Autter and updated by the agent between sessions.
+the index is a stored snapshot. Memory is notes members keep in this organization, edited in Autter and
+updated by the signed-in user's agent between sessions. Reviews read every
+member's pages.
 
 ## Read personal memory first
 
@@ -31,10 +32,12 @@ Keep the home page short. Put detail on a linked page. Each fact is one bullet:
 ```
 
 `source` is the session that learned it. Write the signed-in user's notes to
-their pages. Read `shared_pages` only when another person has joined and the
-task needs their notes, passing `owner_user_id` to `get_memory_page`. When you
-cannot tell whose page a fact belongs on, ask. A rule the reviewer must obey
-goes through `add_learning`, not memory.
+their pages. `org_pages` lists every member's pages in this organization.
+Open one with `get_memory_page` and that member's `owner_user_id`.
+`search_memory` searches the same corpus. Reviews already apply these notes.
+`update_memory_page` only changes the signed-in user's pages. When you cannot
+tell whose page a fact belongs on, ask. A rule the reviewer must obey goes
+through `add_learning`, not memory.
 
 If `get_memory` is absent, the backend has not shipped memory yet. Continue
 with the wiki, learnings, and the checkout.
