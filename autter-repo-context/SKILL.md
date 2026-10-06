@@ -1,6 +1,6 @@
 ---
 name: autter-repo-context
-description: Use Autter MCP to retrieve a repository's wiki, accepted learnings, and indexed code context before implementing, debugging, or explaining that repository. Grounds coding work in how the user's platform works and how it is built.
+description: Use Autter MCP to retrieve the signed-in user's memory, a repository's wiki, accepted learnings, and indexed code context before implementing, debugging, or explaining that repository. Grounds coding work in how the user works and how the platform is built.
 license: MIT
 ---
 
@@ -9,7 +9,35 @@ license: MIT
 Use the customer's repository knowledge stored in Autter to understand product
 behavior, architecture, and team conventions for the current coding task.
 Combine it with the current checkout; the wiki is generated documentation and
-the index is a stored snapshot.
+the index is a stored snapshot. Memory is the signed-in user's own notes,
+edited in Autter and updated by the agent between sessions.
+
+## Read personal memory first
+
+Call `get_memory` before the wiki. Put the home page in context and leave the
+other pages unloaded. When the task needs one of them, `search_memory` or follow
+a `[[slug]]` link with `get_memory_page`.
+
+If the home page `exists` is false, continue without memory. Create it with
+`update_memory_page` only when this session learns something the next session
+would otherwise have to be told. Send `expected_revision` from the page you
+read. `0` creates a missing page. On `memory_revision_conflict`, read
+`detail.page` and write once.
+
+Keep the home page short. Put detail on a linked page. Each fact is one bullet:
+
+```markdown
+- Payments and website share a 2026-10-15 launch deadline [source: https://example.com/sessions/102; added: 2026-09-03]
+```
+
+`source` is the session that learned it. Write the signed-in user's notes to
+their pages. Read `shared_pages` only when another person has joined and the
+task needs their notes, passing `owner_user_id` to `get_memory_page`. When you
+cannot tell whose page a fact belongs on, ask. A rule the reviewer must obey
+goes through `add_learning`, not memory.
+
+If `get_memory` is absent, the backend has not shipped memory yet. Continue
+with the wiki, learnings, and the checkout.
 
 ## Connect and identify the repository
 

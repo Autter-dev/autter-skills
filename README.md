@@ -18,9 +18,10 @@ npx skills add Autter-dev/autter-skills --all
 
 Then tell your agent what you want:
 
-- **"Use Autter's wiki and learnings to understand this repo before coding."** —
-  runs `autter-repo-context`, which reads the repository's wiki, accepted
-  learnings, and indexed architecture through the authenticated Autter MCP.
+- **"Use Autter's memory, wiki, and learnings to understand this repo before coding."** —
+  runs `autter-repo-context`, which reads the signed-in user's memory, the
+  repository's wiki, accepted learnings, and indexed architecture through the
+  authenticated Autter MCP.
 - **"use the skills to install Autter Runtime in this project."** — runs
   `autter-runtime-setup`, which inventories your repo and routes each
   service to the right style skill automatically — you don't need to pick
@@ -32,7 +33,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 
 | Skill | Covers |
 | --- | --- |
-| [`autter-repo-context`](./autter-repo-context/) | Reads repository wiki Markdown, accepted process learnings and team rules, and indexed code/architecture/run commands through Autter MCP. Uses source commits and freshness metadata to ground coding work in how your platform works and how it is built. |
+| [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, repository wiki Markdown, accepted process learnings and team rules, and indexed code/architecture/run commands through Autter MCP. Uses source commits and freshness metadata to ground coding work in how the user works and how the platform is built. |
 | [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, checks installed and deployed capabilities, configures the chosen ingestion path, verifies stored traces/errors, metrics, logs/operations and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including CSP violations and privacy-conscious recent action context. |
@@ -45,10 +46,11 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 Connect your agent to `https://api.autter.dev/mcp` with OAuth and select the
 organization containing your repository. Repository knowledge reads require
 `mcp:read`; they do not require a Runtime ingest key or an SDK install.
-`autter-repo-context` uses `whoami` to match the repository, `get_wiki` for
-stored pages, `get_learnings` for accepted conventions, and `get_repo_index`
-for implementation evidence. It checks stored freshness against the current
-checkout and reports missing sources explicitly.
+`autter-repo-context` uses `whoami` to match the repository, `get_memory` for the
+signed-in user's notes, `get_wiki` for stored pages, `get_learnings` for
+accepted conventions, and `get_repo_index` for implementation evidence. It
+checks stored freshness against the current checkout and reports missing
+sources explicitly.
 
 The `get_wiki` tool requires a backend deployment that includes it. Refresh
 the client's MCP tool list after that deployment. If it is unavailable, the

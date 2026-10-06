@@ -1,11 +1,11 @@
 interface:
   display_name: "Autter repository context"
-  short_description: "Use repository wiki and learnings as coding context"
-  default_prompt: "Use $autter-repo-context to understand this repository's wiki, learnings, and architecture before making the requested change."
+  short_description: "Use memory, wiki, and learnings as coding context"
+  default_prompt: "Use $autter-repo-context to read the user's memory, then this repository's wiki, learnings, and architecture before making the requested change."
 dependencies:
   tools:
     - type: "mcp"
       value: "autter"
-      description: "Repository wiki, learnings, and indexed code context"
+      description: "User memory, repository wiki, learnings, and indexed code context"
       transport: "streamable_http"
       url: "https://api.autter.dev/mcp"
