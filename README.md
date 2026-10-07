@@ -26,6 +26,11 @@ Then tell your agent what you want:
   `autter-runtime-setup`, which inventories your repo and routes each
   service to the right style skill automatically — you don't need to pick
   one yourself.
+- **"Why did that request fail?"** (while running the app locally) — runs
+  `autter-runtime-logs`, which reads the local request/operation records.
+- **"Audit our error handling for Autter Runtime and propose error codes."** —
+  runs `autter-runtime-errors`, which reports coverage gaps and proposes a
+  catalog, and edits only after you approve.
 
 Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-style`
 
@@ -34,12 +39,28 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 | Skill | Covers |
 | --- | --- |
 | [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, repository wiki Markdown, accepted process learnings and team rules, and indexed code/architecture/run commands through Autter MCP. Uses source commits and freshness metadata to ground coding work in how the user works and how the platform is built. |
-| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, checks installed and deployed capabilities, configures the chosen ingestion path, verifies stored traces/errors, metrics, logs/operations and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
-| [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`. |
-| [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including CSP violations and privacy-conscious recent action context. |
+| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, request entry points, queues and error classes, checks installed and deployed capabilities, configures the chosen ingestion path, verifies stored traces/errors, metrics, logs/operations, request summaries, coded errors and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
+| [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`: request summaries, error catalogs, background work, local files, testing, logger-only mode. |
+| [`otel-edge-style`](./otel-edge-style/) | Cloudflare Workers, Vercel Edge and Next.js `middleware.ts`, Deno and Bun, via `@autter/runtime-edge`. |
+| [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including CSP violations, privacy-conscious recent action context, coded API errors and request-id correlation. |
 | [`otel-python-style`](./otel-python-style/) | FastAPI, Flask, Django, plain WSGI/ASGI, via the standard OpenTelemetry Python SDK. |
 | [`otel-go-rust-style`](./otel-go-rust-style/) | Go and Rust backends, via each language's official OTel SDK. |
 | [`otel-generic-style`](./otel-generic-style/) | Everything else — Java, .NET, PHP, Ruby, Elixir, Kotlin, … — via standard OTLP/HTTP + OTel env vars. |
+| [`autter-runtime-logs`](./autter-runtime-logs/) | Local debugging: reads `.autter/runtime/*.jsonl` (or `autter logs --local`) to explain failed or slow requests, one request id, and recent coded errors. |
+| [`autter-runtime-errors`](./autter-runtime-errors/) | Coverage audit: uncovered routes/jobs, plain throws on user-facing paths, swallowing catches, invalid codes, sensitive context keys. Proposes a catalog; applies only with approval. |
+
+### Versions
+
+| Skill | Version | Runtime it targets |
+| --- | --- | --- |
+| `autter-runtime-setup` | 1.6.0 | all of the below |
+| `otel-node-style` | 1.4.0 | `@autter/runtime-node` / `@autter/runtime-next` 1.5.0+ (1.4.0 for operations only) |
+| `otel-edge-style` | 1.0.0 | `@autter/runtime-edge` 1.0.0+, `@autter/runtime-next/edge` 1.5.0+ |
+| `otel-browser-style` | 1.2.0 | `@autter/runtime-browser` 1.4.0+ |
+| `otel-python-style`, `otel-go-rust-style`, `otel-generic-style` | 1.4.0 | OTel SDKs + ingester 1.5.0+ |
+| `autter-runtime-logs`, `autter-runtime-errors` | 1.0.0 | runtime-node/next 1.5.0+ |
+
+Self-hosted ingesters need **1.5.0+** for request summaries and code grouping.
 
 ## Repository knowledge through MCP
 
@@ -75,9 +96,9 @@ Autter Runtime's ingester uses two key types and these HTTP endpoints:
 | `POST /v1/platform-events` | ECS/Kubernetes OOM and restart JSON (server key only) |
 
 Any language with an OpenTelemetry SDK can send server telemetry — that's
-every mainstream language. Only Node.js and the browser get dedicated
-first-party npm packages (`@autter/runtime-node`, `@autter/runtime-browser`,
-`@autter/runtime-next`); everything else is a thin style guide over the
+every mainstream language. Node.js, edge runtimes and the browser get dedicated
+first-party npm packages (`@autter/runtime-node`, `@autter/runtime-next`,
+`@autter/runtime-edge`, `@autter/runtime-browser`); everything else is a thin style guide over the
 standard OTel SDK for that language, which `otel-generic-style` covers even
 when no dedicated skill exists yet.
 
@@ -126,12 +147,36 @@ Node/Next.js setup adds stable operation names, nested context, measured steps
 and explicit business outcomes to selected checkout/job paths. It preserves
 existing loggers, separates diagnostics from issue capture, and checks flushing
 and stored evidence. Other backend languages use their OTel logs exporter and
-logger bridge. Browser/edge capture keeps its own APIs and endpoint.
+logger bridge. Browser capture keeps its own APIs and endpoint; edge runtimes
+use `@autter/runtime-edge` (see `otel-edge-style`).
 
 Read [Node operation setup](otel-node-style/references/operation-logging.md)
 or [customer logging docs](https://docs.autter.dev/runtime/operation-logging).
 Logs improve the evidence available to RCA and eligible draft fixes; they do
 not prove a diagnosis or a working fix. Delivery is best effort.
+
+## Requests and coded errors
+
+Runtime 1.5.0 adds one **request summary** per request (route, status,
+duration, request id, context, steps, inline messages, AI usage), always kept,
+and **coded errors** (`RuntimeError`, `defineRuntimeErrors`) that group into
+one issue per code across the SDK and connected providers. Error responses carry
+the code and `requestId`, and the browser links its failures to the server
+request through `x-request-id`.
+
+The setup skills check installed exports before using these APIs. Required
+versions: runtime-node/next **1.5.0+**, `@autter/runtime-edge` **1.0.0+**,
+runtime-browser **1.4.0+**, and ingester **1.5.0+**. A `latest` tag or a
+version string in source does not prove support. Roll out the ingester first,
+then SDKs and application redeploys, then platform consumers. Python, Go, Rust
+and other stacks send the same attributes (`autter.error.code/why/fix/link/expected`,
+`autter.operation.kind=request`, `autter.request.id`) through their OTel SDKs.
+
+Codes are namespaced, stable and never contain ids, PII or secrets.
+Application-declared `why`/`fix` are shown as declared, and Autter's analysis
+treats them as hypotheses. Business failures marked `expected` are counted but
+never open incidents. See [error catalogs](otel-node-style/references/error-catalog.md)
+and [operation logging](otel-node-style/references/operation-logging.md).
 
 ## License
 

@@ -1,9 +1,9 @@
 ---
 name: otel-python-style
-description: Wire Autter Runtime into Python backends using the standard OpenTelemetry SDK. Configure errors, usage, LLM tracing and optional OTLP logs; verify exporters and stored evidence.
+description: Wire Autter Runtime into Python backends using the standard OpenTelemetry SDK. Configure errors with codes, usage, LLM tracing, OTLP logs and request summaries; verify exporters and stored evidence.
 metadata:
-  version: "1.3.0"
-  tags: [autter, telemetry, python, fastapi, flask, django, opentelemetry, llm, logging]
+  version: "1.4.0"
+  tags: [autter, telemetry, python, fastapi, flask, django, opentelemetry, llm, logging, requests, errors]
   author: autter
 ---
 
@@ -40,7 +40,31 @@ do not install a logging bridge. The Python logs API varies by SDK version,
 so check its installed signatures rather than inventing imports.
 
 Use the server Runtime key, shared service/environment/release resource and
-active trace/span context. Export to the ingester's `/v1/logs`; ordinary
+active trace/span context. With the current SDK (underscore `_logs` modules;
+check your installed version):
+
+```python
+import logging
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+
+def init_logs(resource, headers):
+    provider = LoggerProvider(resource=resource)
+    provider.add_log_record_processor(BatchLogRecordProcessor(
+        OTLPLogExporter(endpoint="https://otlp.autter.dev/v1/logs", headers=headers)))
+    set_logger_provider(provider)
+    summaries = logging.getLogger("autter.requests")
+    summaries.addHandler(LoggingHandler(level=logging.INFO, logger_provider=provider))
+    summaries.setLevel(logging.INFO)
+    summaries.propagate = False  # keep summaries out of the app's stdout handlers
+    return provider
+```
+
+Call it from `init_observability` with the same `resource` and `headers`.
+Attach the `LoggingHandler` to other loggers only where the user wants those
+diagnostics in Autter. Export to the ingester's `/v1/logs`; ordinary
 warnings/error logs are diagnostic records, not automatically grouped issues.
 Keep exception and failed `autter.outcome` trace events for issue capture.
 Do not install Node logging APIs or imitate their async-local implementation.
@@ -57,6 +81,114 @@ not apply to external exporters. Verify stored logs, context and trace IDs in
 isolated test traffic; inspect existing production telemetry. Missing storage
 is unavailable, not evidence of a healthy empty service. The platform readers
 and fix worker need a matching deployment; logs may arrive after initial RCA.
+
+## Coded errors and request summaries
+
+There is no Python Runtime package; these are attribute contracts that any
+OTel SDK can send. Codes and request columns are stored only by a **1.5.0+**
+ingester (self-hosted: migrations `0012`, `0013`). On an older ingester the
+attributes are accepted and ignored; report codes and request summaries as
+pending rather than verified.
+
+**Error codes.** Put these on the exception event (preferred) or the span:
+
+| Attribute | Value |
+| --- | --- |
+| `autter.error.code` | `^[a-z][a-z0-9_]*(\.[a-z0-9_]+){0,3}$`, ≤ 80 chars: namespaced, stable, no ids/PII (`billing.declined`) |
+| `autter.error.why` / `autter.error.fix` | Declared cause / remedy, ≤ 1000 chars each, no PII |
+| `autter.error.link` | Docs URL, ≤ 500 chars |
+| `autter.error.expected` | `True` for business failures (declines, validation): recorded, never an incident |
+
+One code = one issue per service, across message variants and connected
+Sentry/PostHog sources. An invalid code is ignored and the error groups by
+stack/message as before. Never invent codes for third-party exceptions; keep
+existing exception messages unchanged while adding codes.
+
+```python
+def autter_error_attributes(err):
+    attrs = {f"autter.error.{k}": getattr(err, k) for k in ("code", "why", "fix", "link")
+             if isinstance(getattr(err, k, None), str) and getattr(err, k)}
+    if getattr(err, "expected", False):
+        attrs["autter.error.expected"] = True
+    return attrs
+
+# in the central error handler, for an existing AppError class with a `code`:
+span = trace.get_current_span()
+span.record_exception(err, attributes=autter_error_attributes(err))
+```
+
+**Request summaries over OTLP logs.** One log record per request, emitted when
+the response is done, makes the request visible in **Runtime → Logs →
+Requests** with its request id. Summaries are always kept: skip only health
+and metrics routes. This needs the logs provider below (`init_logs`).
+
+```python
+# autter_requests.py
+import logging, re, time, uuid
+from opentelemetry import trace
+
+SKIP = {"/healthz", "/metrics"}
+_summaries = logging.getLogger("autter.requests")
+_REQUEST_ID = re.compile(r"^[\w.-]{8,128}$")
+
+def request_id_from(value):
+    return value if value and _REQUEST_ID.match(value) else str(uuid.uuid4())
+
+def emit_request_summary(method, route, status, started, request_id, outcome=None, code=None):
+    outcome = outcome or ("failed" if status >= 500 else "succeeded")
+    trace.get_current_span().set_attribute("autter.request.id", request_id)
+    attrs = {
+        "autter.event.type": "operation",
+        "autter.operation.kind": "request",
+        "autter.operation.id": uuid.uuid4().hex,
+        "autter.operation.name": f"{method} {route}",
+        "autter.operation.outcome": outcome,  # succeeded|failed|degraded|cancelled
+        "autter.operation.duration_ms": round((time.monotonic() - started) * 1000, 1),
+        "autter.request.id": request_id,
+        "http.request.method": method,
+        "http.route": route,               # the template, never the raw path
+        "http.response.status_code": status,
+    }
+    if code:
+        attrs["autter.error.code"] = code
+    level = logging.ERROR if outcome == "failed" else logging.INFO
+    _summaries.log(level, f"{method} {route}", extra=attrs)
+```
+
+Wire it per framework, inside the OTel instrumentation so the server span is
+current. Error handlers may set `autter_outcome` (`"degraded"` for expected
+coded errors) and `autter_error_code` on the request state.
+
+```python
+# FastAPI / Starlette
+@app.middleware("http")
+async def autter_requests(request, call_next):
+    if request.url.path in SKIP:
+        return await call_next(request)
+    started = time.monotonic()
+    request.state.request_id = rid = request_id_from(request.headers.get("x-request-id"))
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["x-request-id"] = rid
+        return response
+    finally:
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        emit_request_summary(request.method, route, status, started, rid,
+                             getattr(request.state, "autter_outcome", None),
+                             getattr(request.state, "autter_error_code", None))
+```
+
+- **Flask:** set `g.autter_started` and `g.request_id` in `@app.before_request`;
+  in `@app.after_request` use `request.url_rule.rule if request.url_rule else
+  "unmatched"`, set the `x-request-id` header and call `emit_request_summary`.
+- **Django:** a middleware class near the top of `MIDDLEWARE`; after
+  `get_response`, the route is `"/" + request.resolver_match.route` (or
+  `"unmatched"`). Django already turns exceptions into 500 responses there.
+- Cross-origin browser clients need `Access-Control-Expose-Headers:
+  x-request-id` in the CORS config to read the id.
+- Never add bodies, headers, emails or tokens to the summary attributes.
 
 ## Endpoint regression requirements
 
@@ -384,6 +516,7 @@ def autter_selftest():
             "exception.type": "Message",
             "exception.message": "autter selftest",
             "autter.severity": "info",
+            "autter.error.code": "autter_selftest.message",  # 1.5.0+ ingester groups by it
         })
         span.set_status(trace.Status(trace.StatusCode.ERROR, "autter selftest"))
 
@@ -403,6 +536,8 @@ def autter_selftest():
 
     trace.get_tracer_provider().force_flush()
     metrics.get_meter_provider().force_flush()
+    # The request summary is emitted after this returns and ships on the
+    # log batch timer (about a second), not by this flush.
     return {"ok": True, "llm_trace_id": llm_trace_id}
 ```
 
@@ -435,14 +570,22 @@ OTEL_TRACES_SAMPLER_ARG=1 opentelemetry-instrument python app.py
    `/__autter-selftest`. Traces arriving without metrics means the meter
    provider isn't registered (or the instrumentor ran before
    `init_observability`) — exactly the gap the selftest exists to catch.
-5. LLM-wired services: the `llm_trace_id` call appears under **Runtime →
+5. Logs (when `init_logs` and the request middleware are wired): call the
+   route with `-H 'x-request-id: autter-selftest-0001'` and confirm the response
+   echoes it, then find a `GET /__autter-selftest` summary with that request id
+   under **Runtime → Logs → Requests** (self-hosted: a `runtime_logs` row with
+   `kind='request'`). On a 1.5.0+ ingester the selftest issue also shows code
+   `autter_selftest.message`. Traces without logs means the logs provider or
+   handler is not wired; summaries without request columns means an older
+   ingester.
+6. LLM-wired services: the `llm_trace_id` call appears under **Runtime →
    LLM** as provider/model `autter-selftest` (self-hosted: a
    `runtime_llm_calls` row). Remember the selftest ran with sampling forced
    to 100% — real LLM calls only survive the default 1% run if the
    `LlmAwareSampler` exemption is in place, so double-check it's wired
    before trusting this signal.
-6. Trigger one real exception too and confirm `span.record_exception`
+7. Trigger one real exception too and confirm `span.record_exception`
    fired (wrap it manually per above if the automatic instrumentation
    doesn't cover that code path, e.g. a background job) — the selftest
    proves transport, not your error-handler wiring.
-7. Delete the selftest route and drop the temporary env override.
+8. Delete the selftest route and drop the temporary env override.

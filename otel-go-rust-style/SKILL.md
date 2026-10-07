@@ -1,9 +1,9 @@
 ---
 name: otel-go-rust-style
-description: Wire Autter Runtime into Go and Rust backends using their OpenTelemetry SDKs. Configure errors, usage, LLM tracing and optional OTLP logs; verify exporters and stored evidence.
+description: Wire Autter Runtime into Go and Rust backends using their OpenTelemetry SDKs. Configure errors with codes, usage, LLM tracing, OTLP logs and request summaries; verify exporters and stored evidence.
 metadata:
-  version: "1.3.0"
-  tags: [autter, telemetry, go, rust, opentelemetry, llm, logging]
+  version: "1.4.0"
+  tags: [autter, telemetry, go, rust, opentelemetry, llm, logging, requests, errors]
   author: autter
 ---
 
@@ -34,6 +34,33 @@ independently from traces, metrics and LLM calls. Run synthetic verification
 only in isolated tests; inspect existing production records. Matching platform
 readers/fix worker must be deployed; unavailable storage is not empty healthy
 telemetry. Refresh evidence or rerun RCA if logs arrive later.
+
+## Coded errors and request summaries (both languages)
+
+These are attribute contracts, not a package. Codes and request columns are
+stored only by a **1.5.0+** ingester (self-hosted: migrations `0012`, `0013`);
+older ingesters accept and ignore them, so report them as pending there.
+
+| Attribute (exception event preferred, or span) | Value |
+| --- | --- |
+| `autter.error.code` | `^[a-z][a-z0-9_]*(\.[a-z0-9_]+){0,3}$`, ≤ 80 chars: namespaced, stable, no ids/PII |
+| `autter.error.why` / `autter.error.fix` / `autter.error.link` | Declared cause / remedy / docs URL (≤ 1000 / 1000 / 500 chars) |
+| `autter.error.expected` | `true` for business failures: recorded, never an incident |
+
+One code = one issue per service. Never invent codes for third-party errors;
+keep existing error messages unchanged while adding codes.
+
+A request summary is one OTLP **log record** per request with:
+`autter.event.type="operation"`, `autter.operation.kind="request"`,
+`autter.operation.id` (new random id), `autter.operation.name` (`"GET /orders/{id}"`),
+`autter.operation.outcome` (`succeeded|failed|degraded|cancelled`),
+`autter.operation.duration_ms`, `autter.request.id`, `http.request.method`,
+`http.route` (template), `http.response.status_code`, optional
+`autter.error.code`. Honour an incoming `x-request-id` matching
+`^[\w.-]{8,128}$`, else generate one; echo it as a response header and set it
+on the server span. Summaries are always kept: skip only health/metrics
+routes. Cross-origin browsers need `Access-Control-Expose-Headers: x-request-id`.
+The logs pipeline (next section) must be wired first.
 
 ## Detection and telemetry
 
@@ -139,7 +166,115 @@ span.SetStatus(codes.Error, err.Error())
 ```
 
 Do this in error-handling middleware so every handler gets it for free,
-rather than sprinkling it through business logic.
+rather than sprinkling it through business logic. Add the code attributes when
+the error carries one (an existing error type with a `Code()` method, say):
+
+```go
+var coded interface{ Code() string }
+if errors.As(err, &coded) {
+    span.RecordError(err, trace.WithAttributes(
+        attribute.String("autter.error.code", coded.Code()),
+        attribute.Bool("autter.error.expected", isBusinessFailure(err)),
+    ))
+} else {
+    span.RecordError(err)
+}
+```
+
+**Logs and request summaries (Go).** The Go logs SDK is pre-1.0; check the
+installed versions of these modules and keep them in step with the rest of
+`go.opentelemetry.io/otel`:
+
+```go
+import (
+    "go.opentelemetry.io/contrib/bridges/otelslog"
+    "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+    sdklog "go.opentelemetry.io/otel/sdk/log"
+)
+
+lexp, err := otlploghttp.New(ctx,
+    otlploghttp.WithEndpointURL("https://otlp.autter.dev/v1/logs"),
+    otlploghttp.WithHeaders(map[string]string{
+        "authorization": "Bearer " + os.Getenv("AUTTER_RUNTIME_KEY"),
+    }),
+)
+if err != nil {
+    return nil, err
+}
+lp := sdklog.NewLoggerProvider(sdklog.WithResource(res), sdklog.WithProcessor(sdklog.NewBatchProcessor(lexp)))
+summaries := otelslog.NewLogger("autter.requests", otelslog.WithLoggerProvider(lp))
+// call lp.Shutdown(ctx) alongside the tracer shutdown
+```
+
+Wrap the mux **inside** `otelhttp` so the server span is in the context:
+`otelhttp.NewHandler(autterRequests(summaries, mux), "server")`.
+
+```go
+var requestIDPattern = regexp.MustCompile(`^[\w.-]{8,128}$`)
+
+func newID() string { b := make([]byte, 16); _, _ = rand.Read(b); return hex.EncodeToString(b) } // crypto/rand
+
+type statusWriter struct {
+    http.ResponseWriter
+    status int
+}
+
+func (w *statusWriter) WriteHeader(code int) { w.status = code; w.ResponseWriter.WriteHeader(code) }
+
+func autterRequests(summaries *slog.Logger, next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
+            next.ServeHTTP(w, r)
+            return
+        }
+        requestID := r.Header.Get("x-request-id")
+        if !requestIDPattern.MatchString(requestID) {
+            requestID = newID()
+        }
+        w.Header().Set("x-request-id", requestID)
+        trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("autter.request.id", requestID))
+        sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+        started := time.Now()
+        defer func() {
+            recovered := recover()
+            if recovered != nil {
+                sw.status = http.StatusInternalServerError
+            }
+            // Go 1.23+ ServeMux pattern ("GET /orders/{id}"); chi: chi.RouteContext(r.Context()).RoutePattern()
+            route := r.Pattern
+            if i := strings.IndexByte(route, ' '); i >= 0 {
+                route = route[i+1:]
+            }
+            if route == "" {
+                route = "unmatched"
+            }
+            outcome, level := "succeeded", slog.LevelInfo
+            if sw.status >= 500 {
+                outcome, level = "failed", slog.LevelError
+            }
+            summaries.Log(r.Context(), level, r.Method+" "+route,
+                "autter.event.type", "operation",
+                "autter.operation.kind", "request",
+                "autter.operation.id", newID(),
+                "autter.operation.name", r.Method+" "+route,
+                "autter.operation.outcome", outcome,
+                "autter.operation.duration_ms", float64(time.Since(started).Microseconds())/1000,
+                "autter.request.id", requestID,
+                "http.request.method", r.Method,
+                "http.route", route,
+                "http.response.status_code", sw.status,
+            )
+            if recovered != nil {
+                panic(recovered)
+            }
+        }()
+        next.ServeHTTP(sw, r)
+    })
+}
+```
+
+If handlers stream or hijack, reuse the repo's existing response-writer wrapper
+(or `httpsnoop`) instead of `statusWriter`, which hides `http.Flusher`.
 
 **Intentional warning issues** — add `autter.severity` to an exception event
 only when that warning needs issue grouping. Ordinary diagnostics and recovered
@@ -164,10 +299,12 @@ opentelemetry-otlp = { version = "0.30", features = ["http-proto"] }
 ```
 
 ```rust
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::{WithExportConfig, WithHttpConfig};
+use opentelemetry_sdk::{trace::{Sampler, SdkTracerProvider}, Resource};
 use std::collections::HashMap;
 
-fn init_observability(service_name: &str) -> anyhow::Result<opentelemetry_sdk::trace::TracerProvider> {
+fn init_observability(service_name: &str) -> anyhow::Result<SdkTracerProvider> {
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
         .with_endpoint("https://otlp.autter.dev/v1/traces")
@@ -177,23 +314,28 @@ fn init_observability(service_name: &str) -> anyhow::Result<opentelemetry_sdk::t
         )]))
         .build()?;
 
-    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
-        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-        .with_sampler(opentelemetry_sdk::trace::Sampler::ParentBased(Box::new(
-            opentelemetry_sdk::trace::Sampler::TraceIdRatioBased(0.01), // 1%
-        )))
-        .with_resource(opentelemetry_sdk::Resource::new(vec![
-            opentelemetry::KeyValue::new("service.name", service_name.to_string()),
-            opentelemetry::KeyValue::new("service.instance.id", std::env::var("AUTTER_RUNTIME_INSTANCE_ID").unwrap_or_default()),
-            opentelemetry::KeyValue::new("service.version", std::env::var("GIT_SHA").unwrap_or_default()),
-            opentelemetry::KeyValue::new("deployment.environment.name", std::env::var("DEPLOYMENT_ENVIRONMENT").unwrap_or_default()),
-        ]))
+    let resource = Resource::builder()
+        .with_service_name(service_name.to_string())
+        .with_attributes([
+            KeyValue::new("service.instance.id", std::env::var("AUTTER_RUNTIME_INSTANCE_ID").unwrap_or_default()),
+            KeyValue::new("service.version", std::env::var("GIT_SHA").unwrap_or_default()),
+            KeyValue::new("deployment.environment.name", std::env::var("DEPLOYMENT_ENVIRONMENT").unwrap_or_default()),
+        ])
+        .build();
+
+    let provider = SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(0.01)))) // 1%
+        .with_resource(resource)
         .build();
 
     opentelemetry::global::set_tracer_provider(provider.clone());
     Ok(provider)
 }
 ```
+
+(0.30 API: `SdkTracerProvider` and `Resource::builder()`; releases before 0.28
+used `TracerProvider` and `Resource::new`. Match the version in `Cargo.lock`.)
 
 Use the `http-proto` feature (protobuf, matches Autter's default) unless
 the user's existing exporter setup already uses `http-json`.
@@ -212,6 +354,79 @@ span.record("error", true);
 span.record_exception(&err);
 span.set_status(opentelemetry::trace::Status::error(err.to_string()));
 ```
+
+**Codes on Rust errors** — add the attributes to the exception event on the
+OTel span (with `tracing-opentelemetry`, reach it through the tracing span):
+
+```rust
+use opentelemetry::{trace::TraceContextExt, KeyValue};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+let cx = tracing::Span::current().context();
+cx.span().add_event("exception", vec![
+    KeyValue::new("exception.type", "PaymentDeclined"),
+    KeyValue::new("exception.message", err.to_string()),
+    KeyValue::new("autter.error.code", err.code()), // e.g. "billing.declined"
+    KeyValue::new("autter.error.expected", true),
+]);
+```
+
+**Logs and request summaries (Rust).** Add `opentelemetry-appender-tracing`
+(same minor as `opentelemetry`) and `uuid` (`v4`), build an
+`SdkLoggerProvider` with `opentelemetry_otlp::LogExporter::builder().with_http()
+.with_endpoint("https://otlp.autter.dev/v1/logs")` and the same headers and
+resource, and add `OpenTelemetryTracingBridge::new(&logger_provider)` as a
+layer on the existing `tracing_subscriber` registry, filtered to the
+`autter.requests` target unless the user wants all events exported. Then an
+axum middleware (`.layer(axum::middleware::from_fn(autter_requests))`, inside
+the `TraceLayer`):
+
+```rust
+use axum::{extract::{MatchedPath, Request}, http::HeaderValue, middleware::Next, response::Response};
+use std::time::Instant;
+
+pub async fn autter_requests(req: Request, next: Next) -> Response {
+    if matches!(req.uri().path(), "/healthz" | "/metrics") {
+        return next.run(req).await;
+    }
+    let method = req.method().to_string();
+    let route = req.extensions().get::<MatchedPath>()
+        .map(|p| p.as_str().to_owned())
+        .unwrap_or_else(|| "unmatched".into());
+    let request_id = req.headers().get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| (8..=128).contains(&v.len())
+            && v.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c)))
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let started = Instant::now();
+    let mut res = next.run(req).await;
+    let status = res.status().as_u16() as i64;
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        res.headers_mut().insert("x-request-id", value);
+    }
+    let name = format!("{method} {route}");
+    let outcome = if status >= 500 { "failed" } else { "succeeded" };
+    tracing::info!(
+        target: "autter.requests",
+        "autter.event.type" = "operation",
+        "autter.operation.kind" = "request",
+        "autter.operation.id" = %uuid::Uuid::new_v4().simple(),
+        "autter.operation.name" = %name,
+        "autter.operation.outcome" = outcome,
+        "autter.operation.duration_ms" = started.elapsed().as_secs_f64() * 1000.0,
+        "autter.request.id" = %request_id,
+        "http.request.method" = %method,
+        "http.route" = %route,
+        "http.response.status_code" = status,
+        "{}", name
+    );
+    res
+}
+```
+
+Other tower stacks: the same logic as a `tower::Layer`. Panics are converted
+to 500 only if a `CatchPanicLayer` sits inside this middleware.
 
 **Grouping (both languages)**: `RecordError` (Go) and `record_exception`
 (Rust) attach the exception type, message, and backtrace. Autter parses the
@@ -380,6 +595,7 @@ mux.HandleFunc("/__autter-selftest", func(w http.ResponseWriter, r *http.Request
         attribute.String("exception.type", "Message"),
         attribute.String("exception.message", "autter selftest"),
         attribute.String("autter.severity", "info"),
+        attribute.String("autter.error.code", "autter_selftest.message"), // 1.5.0+ ingester groups by it
     ))
     span.SetStatus(codes.Error, "autter selftest")
     span.End()
@@ -402,6 +618,8 @@ mux.HandleFunc("/__autter-selftest", func(w http.ResponseWriter, r *http.Request
 
     tp.ForceFlush(r.Context()) // the TracerProvider from initObservability
     mp.ForceFlush(r.Context()) // the MeterProvider, if wired
+    // The request summary is logged after this handler returns and ships on
+    // the log batch processor's interval (or lp.Shutdown), not by these flushes.
     w.Write([]byte(`{"ok":true,"llmTraceId":"` + llmTraceID + `"}`))
 })
 ```
@@ -433,13 +651,20 @@ Rust) and revert it together with the route.
    is wired — request metrics for `/__autter-selftest`. Traces arriving
    without metrics means no meter provider: either wire it (section
    above) or tell the user usage stats are trace-derived at 1%.
-5. LLM-wired services: the returned `llmTraceId` call appears under
+5. Logs (when the logs provider and request middleware are wired): call the
+   route with `-H 'x-request-id: autter-selftest-0001'`, confirm the response
+   echoes it, then find a `GET /__autter-selftest` summary with that request id
+   under **Runtime → Logs → Requests** (self-hosted: `runtime_logs` with
+   `kind='request'`). On a 1.5.0+ ingester the selftest issue shows code
+   `autter_selftest.message`. Traces without logs means the logs provider or
+   bridge isn't wired; flush/shutdown the logger provider before concluding.
+6. LLM-wired services: the returned `llmTraceId` call appears under
    **Runtime → LLM** as provider/model `autter-selftest` (self-hosted: a
    `runtime_llm_calls` row). Remember the selftest ran with sampling at
    100% — real LLM calls only survive the default 1% run with the
    exemption from the LLM section in place; double-check it before
    trusting this signal.
-6. Trigger one real error path too and confirm
+7. Trigger one real error path too and confirm
    `RecordError`/`record_exception` was called on that span — the
    selftest proves transport, not your error-handler wiring.
-7. Delete the selftest route and revert the sampling override.
+8. Delete the selftest route and revert the sampling override.

@@ -1,9 +1,9 @@
 ---
 name: otel-browser-style
-description: Wire Autter Runtime into browser apps, including CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
+description: Wire Autter Runtime into browser apps, including CSP violations, recent user actions, coded API errors, request-id correlation with server requests, error boundaries, and a working browser telemetry route.
 metadata:
-  version: "1.1.1"
-  tags: [autter, telemetry, browser, react, spa, error-tracking]
+  version: "1.2.0"
+  tags: [autter, telemetry, browser, react, spa, error-tracking, request-id, errors]
   author: autter
 ---
 
@@ -24,8 +24,21 @@ key protected `/v1/sourcemaps` endpoint so browser stacks can identify source.
 Never put the server key or source maps in a public browser request.
 
 ```bash
-npm install @autter/runtime-browser
+npm install @autter/runtime-browser@^1.4.0
 ```
+
+Coded errors and request-id correlation need **1.4.0+** (and a 1.5.0+
+ingester to store codes and request ids). Check the installed package exports
+`autterErrorFromResponse`:
+
+```bash
+npm ls @autter/runtime-browser
+node -e 'import("@autter/runtime-browser").then(m=>console.log("autterErrorFromResponse" in m ? "1.4.0 APIs present" : "missing: autterErrorFromResponse"))'
+```
+
+If it is missing, keep the rest of this setup and report coded browser errors
+and request-id correlation as pending. Next.js apps check the
+`@autter/runtime-browser` version resolved under `@autter/runtime-next`.
 
 Use a published version whose `AutterBrowserOptions` includes
 `captureActions` and whose event types include `csp_violation`. Check the
@@ -60,6 +73,42 @@ existing handlers, keyboard behavior, and accessible names. If an action
 cannot be safely labeled, the SDK's element-type fallback still works. Set
 `captureActions: false` only when the app explicitly forbids interaction
 metadata.
+
+## Coded API errors and request ids (1.4.0+)
+
+`captureException` duck-types `code`, `why`, `fix`, `link` and `expected` on
+any error, so existing error classes that carry a `code` need no change and no
+new browser error class is needed. For API calls that fail with a JSON error
+body, turn the response into an error once, where the app already handles
+non-OK responses:
+
+```ts
+import { autterErrorFromResponse, captureException } from "@autter/runtime-browser";
+
+const res = await fetch("/api/checkout", { method: "POST", body });
+if (!res.ok) {
+  const err = await autterErrorFromResponse(res); // reads the body; use res.clone() if you still need it
+  if (res.status >= 500) captureException(err);  // 4xx coded `expected` errors are usually already recorded server-side
+  showError(err.message);
+}
+```
+
+- The server body shape is `{ "error": { "message", "code"?, "why"?, "fix"?,
+  "link"?, "requestId"? } }` (from `autterErrorResponse()` / `toClientError`).
+  Show `message` (and `fix` if the product wants it); never render raw server
+  stacks.
+- Do not double-report: the server already captured the error with the same
+  code. Capture browser-side only when the browser's own handling matters
+  (failed render, retry exhausted), and keep the existing UI behavior.
+- **Request ids.** The fetch/XHR failure hook reads the `x-request-id` response
+  header into `autter.request.id`, so a browser failure links to the server
+  request summary without browser tracing. Same-origin APIs need nothing more.
+  **Cross-origin APIs** must send `Access-Control-Expose-Headers: x-request-id`
+  or the browser cannot read the header. Node `autterRequests()` adds it when
+  CORS headers are present; other backends add it to their CORS config. Check a
+  real cross-origin response in DevTools.
+- Never put tokens, emails or other personal data in codes or error messages
+  you construct in the browser.
 
 ## Check the app's Content Security Policy
 
@@ -170,7 +219,8 @@ manually anywhere you catch something yourself.
 
 ```ts
 initAutterBrowser({ endpoint, clientKey?, service, environment?, release?, sessionTracking?, captureActions?, captureNetworkFailures?, captureTimings?, beforeSend? });
-captureException(error, context?);       // report a caught error
+captureException(error, context?);       // report a caught error; reads code/why/fix/link/expected
+await autterErrorFromResponse(response); // 1.4.0+: JSON error body → Error with code/why/fix/requestId
 captureMessage(message, severity?, context?); // warning/info without an exception — severity "fatal"|"error"|"warning"|"info", default "warning"
 trackEvent(name, props?);                 // coarse usage counter — no PII in props
 setUser(id | null);                       // opaque id ONLY — never an email/name
@@ -205,11 +255,11 @@ flush();                                   // skip the batch window
 ```
 
 For relay modes, a temporary handled exception can additionally prove the
-error route:
+error route. On 1.4.0+, give it a code to prove code grouping:
 
 ```ts
 import { captureException, flush } from "@autter/runtime-browser";
-captureException(new Error("autter selftest")); // error pipeline via relay
+captureException(Object.assign(new Error("autter selftest"), { code: "autter_selftest.browser" }));
 flush();
 ```
 
@@ -234,4 +284,9 @@ flush();
    (scheme + host + port) the app is running on.
 6. Ground truth in the dashboard (~1–2 min): one info-severity
    "autter selftest" issue and a usage counter `event:autter_selftest` —
-   both clearly named; the user can resolve or ignore them.
+   both clearly named; the user can resolve or ignore them. On 1.4.0+, the
+   coded selftest error shows the `autter_selftest.browser` code chip.
+7. Request ids (1.4.0+, isolated environment): trigger a failing API call to a
+   backend with request summaries and confirm the browser occurrence carries
+   the same request id as the server summary (**Find request** in Runtime).
+   For a cross-origin API, a missing id means the expose header is missing.

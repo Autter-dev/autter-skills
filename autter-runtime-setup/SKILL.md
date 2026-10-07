@@ -1,10 +1,10 @@
 ---
 name: autter-runtime-setup
-description: Set up repository-scoped Autter Runtime using application instrumentation, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
+description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, coded errors, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
 metadata:
-  version: "1.5.0"
+  version: "1.6.0"
   author: autter
-  tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
+  tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions, requests, errors]
 ---
 
 # Autter Runtime Setup
@@ -108,8 +108,17 @@ workspace/package separately. While inventorying, also note which services
 `@anthropic-ai/sdk`, `@google/genai`, `langchain`, Python's
 `openai`/`anthropic`/`litellm`/`google-genai`, Go's `openai-go`, Bedrock
 SDKs, or raw HTTP calls to provider endpoints — those services get LLM
-tracing wired alongside errors/usage. Show the user the list before
-proceeding, e.g.:
+tracing wired alongside errors/usage. Also note, per service:
+
+- **request entry points**: HTTP apps/routers, fetch handlers, Next.js route
+  handlers and `middleware.ts`, edge workers;
+- **job consumers and queues**: BullMQ/SQS/Kafka/Celery consumers, crons, and
+  where jobs are enqueued (carrier propagation points);
+- **existing error classes** that carry a `code`/`status` (`AppError`,
+  `HttpError`, domain errors) and **existing error-response helpers** (error
+  middleware, exception filters, `res.status(…).json({ error })` helpers).
+
+Show the user the list before proceeding, e.g.:
 
 > Found: `apps/api` (Node/Express, calls OpenAI), `apps/web` (Next.js),
 > `worker/` (Python/Celery). I'll wire up all three — including LLM
@@ -123,7 +132,8 @@ style skill **before editing anything**:
 | Detected stack | Style skill |
 | --- | --- |
 | Node.js: Express, Fastify, Koa, NestJS, plain `http` | `otel-node-style` |
-| Next.js (any router) | `otel-node-style` (has a dedicated Next.js section) |
+| Next.js (any router) | `otel-node-style` (has a dedicated Next.js section); `middleware.ts` and `runtime = "edge"` routes also `otel-edge-style` |
+| Cloudflare Workers / Vercel Edge / Deno / Bun (fetch-only) | `otel-edge-style` |
 | Browser: React/Vue/Svelte/Angular/vanilla SPA, static site | `otel-browser-style` |
 | Python: FastAPI, Flask, Django, plain WSGI/ASGI | `otel-python-style` |
 | Go or Rust (any framework) | `otel-go-rust-style` |
@@ -169,8 +179,9 @@ for other backends follow their OTLP logs section and the
   and frontend need the matching operation-evidence deployment. Order rollout:
   ingester, SDK release/application redeploy, then platform consumers.
 - Initialize once before application startup. Next.js logging uses
-  `@autter/runtime-next/server` in the Node runtime; browser/edge apps keep
-  their existing lightweight capture APIs.
+  `@autter/runtime-next/server` in the Node runtime; browser apps keep their
+  lightweight capture APIs, and edge code uses `@autter/runtime-edge` /
+  `@autter/runtime-next/edge` (`otel-edge-style`).
 - Wrap meaningful customer operations (checkout, queue job, scheduled work)
   with stable names, measured steps and bounded nested context. Convert a
   matching `withProcessSpan` wrapper rather than nesting duplicate boundaries.
@@ -184,12 +195,58 @@ for other backends follow their OTLP logs section and the
 - Preserve existing loggers and providers. Choose stdout behavior through
   `logging.console`; `logging.minLevel` filters messages, not summaries.
   Runtime does not automatically forward all Pino/Winston records.
-- Context/trace IDs are local to the operation; pass safe workflow IDs through
-  queue payloads explicitly. Similar timestamps or custom workflow IDs alone
-  do not establish an operation-evidence link.
+- Context/trace IDs are local to the operation. On 1.5.0+, propagate the
+  `runtimeContext.carrier()` through queue payloads to link jobs; on 1.4.x,
+  pass safe workflow IDs explicitly. Similar timestamps or custom workflow IDs
+  alone do not establish an operation-evidence link.
 - Await logs and the existing trace/metric flush at the end of short-lived
   invocations, and shutdown after draining long-running services. Report
   delivery failures and buffered/dropped records. Telemetry is best effort.
+
+### Requests, coded errors and evidence
+
+Request summaries and coded errors are what make Autter's root-cause analysis
+concrete: the failing request's route, status, steps, context and inline
+messages, compared against healthy requests, with one issue per error code.
+
+| Component | Required version |
+| --- | --- |
+| `@autter/runtime-node`, `@autter/runtime-next` | **1.5.0+** |
+| `@autter/runtime-edge` | **1.0.0+** |
+| `@autter/runtime-browser` (codes, request-id correlation) | **1.4.0+** |
+| Self-hosted otlp-ingester | **1.5.0+** (migrations `0012`, `0013`, `0014`) |
+| Python/Go/Rust/other | attribute contract in the style skill + 1.5.0+ ingester |
+
+Check the **installed** package exports (each style skill has the command), not
+`latest`, a dependency range or the SDK repo's source. **Rollout order:**
+ingester 1.5.0 → SDKs (node/next 1.5.0, edge 1.0.0, browser 1.4.0) and
+application redeploys → platform (backend/frontend/fix worker). A newer SDK
+against an older ingester loses codes and request columns silently; report
+such services as pending.
+
+- **Mount request middleware on every HTTP service** (`autterRequests`,
+  `autterFastify`, `withRuntimeRequest`, `withAutter`, or the summary
+  middleware in the language skill). Summaries are **always kept**, never
+  sampled, so `ignore` is only for health and metrics routes.
+- **Adopt catalogs where errors are user-facing** (API error responses, UI
+  messages) and for the top recurring issues. Use `autterErrorResponse()` /
+  `toClientError` so responses carry `code` and `requestId`, keeping existing
+  response shapes. Existing error classes with a `code` work as-is
+  (duck-typed); add `code/why/fix` without rewriting messages.
+- **Code rules:** `^[a-z][a-z0-9_]*(\.[a-z0-9_]+){0,3}$`, ≤ 80 chars,
+  namespaced by domain (`billing.declined`), stable across releases,
+  low-cardinality, and never containing ids, PII, tenant names or secrets.
+  One code = one issue per service, across SDK and connected providers.
+- **`expected: true`** for business failures (declines, validation, plan
+  limits): recorded and counted, never an incident or auto-fix. Defects and
+  dependency failures stay `false`.
+- **Queues:** put `runtimeContext.carrier()` in job payloads and start
+  consumers with `withRuntimeOperation(name, fn, ctx, { from })`, so jobs link
+  to the request that enqueued them.
+- **Declared ≠ proven:** `why`/`fix` are shown as "declared by the
+  application"; analysis treats them as hypotheses.
+- Offer the `autter-runtime-errors` skill for a full coverage audit and catalog
+  proposal, and `autter-runtime-logs` for local debugging.
 
 **LLM calls.** Autter records every LLM/GenAI call with model, tokens,
 latency, and a USD cost — then watches for spend spikes, failing models,
@@ -363,6 +420,15 @@ confirm **every applicable signal** per the style skill's Verify steps:
    and captured trace/operation IDs. Confirm the failed issue's **Operation
    evidence** separately. Refresh or rerun analysis for later arrivals. An
    unavailable source and an empty available source are different results.
+5. **Requests and codes** (1.5.0+ SDK/edge/browser and ingester):
+   - request-id round trip: a request sent with `x-request-id:
+     autter-selftest-0001` echoes it, and its summary is findable by that id
+     in **Runtime → Logs → Requests** (or **Find request**);
+   - two different messages with one code (`autter_selftest.failed`) produce
+     **one** issue with two occurrences;
+   - the issue shows the declared why/fix, labelled as declared;
+   - an `expected` coded error is stored and counted but opens **no** incident.
+   If the ingester or SDK is older, report these as pending, not failed.
 
 Two things the style skills handle that you shouldn't improvise around:
 
@@ -427,7 +493,9 @@ Rules for the edit:
 - **Match the repo's stack**: name the actual package/functions the style
   skill wired (`captureException`, `runtimeLogger`, `withRuntimeOperation` for
   supported JS installs; logs exporters and trace events for raw OTel stacks).
-  Drop logging/operation lines if capability is pending, and LLM/browser lines
+  Drop logging/operation lines if capability is pending, request/code/background
+  lines unless 1.5.0 APIs are installed (raw OTel stacks: name their summary
+  middleware and the `autter.error.*` attributes instead), and LLM/browser lines
   when they don't apply. Do not record uninstalled APIs as repo conventions.
 
 Block to write (adjust the function names to the stack you wired):
@@ -453,6 +521,18 @@ When you write or change code here:
   `runtimeLogger.error` is also a diagnostic record; retain `captureMessage`
   only for intentional issue-producing messages.
   Favour a few high-signal events over one per log line.
+- **Requests:** every HTTP app keeps its request middleware
+  (`autterRequests` / `withRuntimeRequest` / `withAutter`). Add request facts
+  with `runtimeContext.set({...})`, messages with `runtimeContext.info/warn`,
+  and business results with `runtimeContext.outcome(...)`; quote
+  `runtimeContext.requestId` in support-facing messages.
+- **Error codes:** user-facing failures throw catalog errors from
+  `defineRuntimeErrors("<domain>", {...})` (or `RuntimeError`). Codes are
+  namespaced, stable, lowercase (`billing.declined`). Mark business failures
+  `expected: true`. Error responses go through `autterErrorResponse()` /
+  `toClientError` and include the `requestId`.
+- **Background work:** use `runtimeContext.fork` / `runInBackground` for side
+  work, and pass `runtimeContext.carrier()` in queue payloads.
 - **Operations:** wrap meaningful requests, jobs, consumers, and cron ticks with
   `withRuntimeOperation(name, fn, context)`, stable names and measured steps.
   Declare failed/degraded/cancelled/pending results explicitly: a returned
@@ -474,7 +554,7 @@ When you write or change code here:
 - **Keys & privacy:** the ingest key is referenced only by env var
   (`AUTTER_RUNTIME_KEY`), never inlined. Never put prompts, completions, PII, or
   secrets in span attributes or message context — ids, counts, and model names
-  only.
+  only. Never put ids, PII or secrets in error codes, `why` or `fix`.
 
 Setup and verification live in the `autter-runtime-setup` skill; follow the
 matching `otel-*-style` skill for exact APIs.
@@ -490,6 +570,8 @@ Tell the user, concisely:
 
 - Which services got server telemetry (OTel traces/metrics) vs. browser
   telemetry (errors/usage) vs. both.
+- Which services emit request summaries and coded errors, which catalogs were
+  added, and which are pending an SDK or ingester upgrade.
 - Which services have structured logs and operation summaries, which SDK and
   deployed capabilities were verified, and which upgrades/redeploys are pending.
   Distinguish stored logs, linked evidence, completed analysis, and a validated
@@ -550,3 +632,11 @@ Tell the user, concisely:
 - Default trace sampling is 1% (errors are always captured at 100% — never
   sampled out). Don't raise the sample rate without the user asking; high
   sampling on a busy service generates real cost.
+- Never invent error codes for third-party errors (vendor SDK, database,
+  framework); wrap them in your own coded error with `cause`, or leave them
+  uncoded.
+- Never rewrite existing user-facing error messages while adding codes; add
+  `code`/`why`/`fix` alongside them.
+- Never put ids, PII, tenant names or secrets in error codes, `why` or `fix`.
+- Never claim request summaries or code grouping work from a package version
+  string; verify installed exports and stored records.
