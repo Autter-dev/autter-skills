@@ -245,6 +245,12 @@ such services as pending.
   to the request that enqueued them.
 - **Declared ≠ proven:** `why`/`fix` are shown as "declared by the
   application"; analysis treats them as hypotheses.
+- **Local files:** in development (`NODE_ENV=development`) the Node SDK writes
+  `.autter/runtime/*.jsonl`. Add `.autter/` to the repo's `.gitignore` while
+  wiring, as the Runtime repository does; never commit those files.
+- **Own OTel SDK already running:** use `initAutterLogging` (logger-only mode)
+  instead of a second SDK. There, a declared failed outcome without an
+  exception is only an error log, not an issue; see `otel-node-style`.
 - Offer the `autter-runtime-errors` skill for a full coverage audit and catalog
   proposal, and `autter-runtime-logs` for local debugging.
 

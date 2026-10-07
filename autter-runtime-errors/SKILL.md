@@ -11,8 +11,10 @@ metadata:
 
 Use this when the user asks how well a repo is instrumented, wants error codes
 or an error catalog, or before adopting `RuntimeError` / `defineRuntimeErrors`.
-The rules match Autter's PR-review **Runtime coverage** check, so fixing them
-here keeps future reviews quiet.
+Most rules match a check type in Autter's advisory PR-review **Runtime coverage**
+bundle (column below), so fixing them here keeps future reviews quiet. That
+bundle runs only for repositories with an active Runtime ingest key that import
+an `@autter/runtime-*` package.
 
 This skill **reads and proposes**. It edits code only after the user approves
 the specific change set.
@@ -38,16 +40,16 @@ the specific change set.
 Report each finding with `path:line`, rule id, a one-line reason and a
 proposed fix. Skip generated code, vendored code, tests and fixtures.
 
-| Rule id | Finding | Proposed fix |
-| --- | --- | --- |
-| `uncovered-route` | HTTP service or route handler with no request coverage: no `autterRequests` / `autterFastify` / `withRuntimeRequest` / `withAutter` / summary middleware on its app or router | Mount the middleware once per app (see the style skill), not per route |
-| `uncovered-job` | Queue consumer, cron/scheduled task or worker entry point without `withRuntimeOperation` / `withProcessSpan` (or a job span in other languages) | Wrap the job body with a stable name; propagate `runtimeContext.carrier()` from the producer |
-| `plain-throw-user-facing` | `throw new Error(...)` (or a bare `HttpError`/`AppError` with no code) whose message reaches an API response or UI, **in a service that already has a catalog** | Use or extend the domain catalog; keep the message text |
-| `swallowed-catch` | `catch` that neither rethrows, captures (`captureException`, `runtimeContext.error`, `rt.captureException`, `record_exception`/`RecordError`), sets an outcome, nor returns an error result | Capture, set `outcome("degraded"/"failed", …)`, or rethrow. An intentional ignore gets a short comment naming why |
-| `invalid-code` | A literal code that fails `^[a-z][a-z0-9_]*(\.[a-z0-9_]+){0,3}$` or > 80 chars, has no namespace, or contains interpolation/ids (`` `billing.${id}` ``) | Rename to a stable namespaced code; move ids into context |
-| `sensitive-context-key` | Context, error `why`/`fix`/`message`/`internal` or summary attributes with keys or values like `password`, `token`, `secret`, `authorization`, `cookie`, `apiKey`, `email`, `phone`, `ssn`, `card`, raw bodies or full URLs with query strings | Remove, or replace with an opaque id or a coarse value |
-| `fire-and-forget` | Unawaited promise doing work that can fail inside a request (`void sendEmail()`, `.then()` without catch) | `runInBackground(name, fn)` or await it |
-| `duplicate-capture` | The same error captured at two boundaries (handler and error middleware) | Keep the outer boundary only |
+| Rule id | PR-review check | Finding | Proposed fix |
+| --- | --- | --- | --- |
+| `uncovered-route` | `runtime_coverage_uncovered_handler` | HTTP service or route handler with no request coverage: no `autterRequests` / `autterFastify` / `withRuntimeRequest` / `withAutter` / summary middleware on its app or router | Mount the middleware once per app (see the style skill), not per route |
+| `uncovered-job` | `runtime_coverage_uncovered_handler` | Queue consumer, cron/scheduled task or worker entry point without `withRuntimeOperation` / `withProcessSpan` (or a job span in other languages) | Wrap the job body with a stable name; propagate `runtimeContext.carrier()` from the producer |
+| `plain-throw-user-facing` | `runtime_coverage_uncoded_error` | `throw new Error(...)` (or a bare `HttpError`/`AppError` with no code) whose message reaches an API response or UI, **in a service that already has a catalog** | Use or extend the domain catalog; keep the message text |
+| `swallowed-catch` | `runtime_coverage_swallowed_catch` | `catch` that neither rethrows, captures (`captureException`, `runtimeContext.error`, `rt.captureException`, `record_exception`/`RecordError`), sets an outcome, nor returns an error result | Capture, set `outcome("degraded"/"failed", …)`, or rethrow. An intentional ignore gets a short comment naming why |
+| `invalid-code` | `runtime_coverage_invalid_error_code` | A literal code that fails `^[a-z][a-z0-9_]*(\.[a-z0-9_]+){0,3}$` or > 80 chars, has no namespace, or contains interpolation/ids (`` `billing.${id}` ``) | Rename to a stable namespaced code; move ids into context |
+| `sensitive-context-key` | `runtime_coverage_sensitive_context` | Context, error `why`/`fix`/`message`/`internal` or summary attributes with keys or values like `password`, `token`, `secret`, `authorization`, `cookie`, `apiKey`, `email`, `phone`, `ssn`, `card`, raw bodies or full URLs with query strings | Remove, or replace with an opaque id or a coarse value |
+| `fire-and-forget` | — (audit only) | Unawaited promise doing work that can fail inside a request (`void sendEmail()`, `.then()` without catch) | `runInBackground(name, fn)` or await it |
+| `duplicate-capture` | — (audit only) | The same error captured at two boundaries (handler and error middleware) | Keep the outer boundary only |
 
 Be precise rather than exhaustive: a `throw` deep in a library that is always
 caught and mapped above is not user-facing. Mark uncertain findings

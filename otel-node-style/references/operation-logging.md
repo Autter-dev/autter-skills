@@ -131,12 +131,13 @@ const supportRef = runtimeContext.requestId;          // for emails and support 
 
 - `debug`/`info` messages are folded into the summary as
   `autter.operation.logs` (`{ t, level, message, attrs? }`, `t` in ms since
-  start), max 50, then `autter.operation.logs_truncated=true`. `warn`/`error`
+  start), max 50 messages of up to 300 characters (~6 KB per timeline), then
+  `autter.operation.logs_truncated=true`. `logging.minLevel` still applies. `warn`/`error`
   are folded **and** emitted as separate records. `autter.operation.level` is
   the highest level seen. `logging.inline: false` turns folding off.
-- Outside any request or operation there is no summary to attach to. Check
-  the installed JSDoc for what `runtimeContext` does there, and do not rely on
-  it in startup code.
+- Outside any request or operation, `set` and `outcome` are no-ops and the
+  log methods behave like `runtimeLogger` (separate records). `runtimeContext.error(err)`
+  also attaches the error's code/why/fix to the summary when there is one.
 - Summaries are **always kept**: no sampling. The only volume controls are
   the middleware's `ignore` globs (health and metrics routes only), field
   budgets and the ingester's `LOG_TTL_DAYS`.
@@ -154,10 +155,15 @@ await withRuntimeOperation("receipt.send", (op) => sendReceipt(job.data.orderId)
 ```
 
 - `fork` and `runInBackground` capture the parent id at call time, so they
-  still link after the request summary is sealed.
+  still link after the request summary is sealed (a plain nested
+  `withRuntimeOperation` keeps 1.4.0 behaviour: no link once the parent
+  finished). `runInBackground` errors are recorded on the child, never as
+  unhandled rejections.
 - The carrier is `{ v: 1, op, req?, traceparent? }`: ids only, safe to
-  serialise into a job payload. The consumer gets `autter.parent_trace_id`, the
-  request id and a span link to the producer trace.
+  serialise into a job payload (~200 bytes). The consumer gets
+  `autter.operation.parent_id`, the same request id, `autter.parent_trace_id`
+  and a span in a new trace with a link to the producer. Malformed carriers are
+  ignored.
 - `waitUntil` (4th argument / `withRuntimeRequest` option) hands the flush to a
   serverless runtime. Next.js wires `after()` automatically.
 

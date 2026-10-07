@@ -17,20 +17,38 @@ dashboard or the `autter-repo-context` MCP tools instead.
 ## Where the records come from
 
 `@autter/runtime-node` / `@autter/runtime-next` **1.5.0+** write one JSON
-object per line to `.autter/runtime/*.jsonl` (daily files, up to 7) when not in
-production. Each line is a request summary, operation summary, log message or
-captured error, with the same keys as the OTLP attributes: `autter.operation.kind`,
-`autter.operation.name`, `autter.operation.outcome`, `autter.operation.duration_ms`,
-`autter.request.id`, `http.route`, `http.response.status_code`,
-`autter.error.code`, inline `autter.operation.logs`, steps and context.
+object per line to `.autter/runtime/YYYY-MM-DD.jsonl` (UTC days, then
+`YYYY-MM-DD.N.jsonl` past 10 MiB, 7 files kept) when `NODE_ENV=development`,
+or when the app sets `logging.file`. Each line is flat:
+
+```json
+{"time":"2026-10-08T09:12:03.120Z","level":"error","message":"POST /checkout",
+ "service":"payments-api","environment":"development","release":"…",
+ "traceId":"…","spanId":"…",
+ "autter.event.type":"operation","autter.operation.kind":"request",
+ "autter.operation.name":"POST /checkout","autter.operation.outcome":"failed",
+ "autter.operation.duration_ms":182,"autter.request.id":"…",
+ "http.route":"/checkout","http.response.status_code":500,
+ "autter.error.code":"billing.limit","autter.operation.logs":[…],"…context keys…":"…"}
+```
+
+`time`, `level`, `message`, `service`, `environment` are always present;
+`release` and `traceId`/`spanId` only when known. Everything else is the
+record's attributes at the top level. Summaries have
+`autter.event.type=operation` and `autter.operation.kind` `request` or
+`operation`; other lines are plain log records (warn/error and messages outside
+operations). With `initAutterServer`, exceptions go to traces, not these files:
+look for `autter.error.*` on the summary. In logger-only mode
+(`initAutterLogging`), unspanned exceptions are also lines with `exception.*`
+and `autter.capture.mode=log`.
 
 No directory or no files usually means one of:
 
 | Cause | Check |
 | --- | --- |
 | SDK older than 1.5.0 | `npm ls @autter/runtime-node @autter/runtime-next` |
-| Production mode / file sink off | `NODE_ENV`, a custom `logging.sinks` without `fileSink` |
-| Read-only filesystem (container) | the SDK disables the file sink silently |
+| Not development | the default needs `NODE_ENV=development` exactly (unset or `test` writes nothing); or a custom `logging.sinks` without `fileSink()` |
+| Read-only or permission-denied filesystem | the SDK printed one warning and turned the file sink off |
 | Non-Node service | Python/Go/edge services do not write local files; use their console output |
 | Wrong directory | the files live under the **process working directory** of the service |
 
@@ -41,30 +59,24 @@ user asks.
 
 1. If the installed CLI supports it (`autter logs --help` lists `--local`), use
    it: `autter logs --local`, plus its filters.
-2. Otherwise read the files directly with `jq`. Inspect two lines first
-   (`head -n 2 .autter/runtime/*.jsonl | jq .`) to confirm where the attributes
-   sit in your installed version; the helper below accepts both flat keys and an
-   `attributes` object.
-
-```bash
-A='def a($k): (.attributes[$k]? // .[$k]?);'
-```
+2. Otherwise read the files directly with `jq` (keys contain dots, so quote
+   them: `.["autter.request.id"]`).
 
 **Recent failed requests**
 
 ```bash
-cat .autter/runtime/*.jsonl | jq -c "$A"' select(a("autter.operation.kind")=="request" and a("autter.operation.outcome")=="failed")
-  | {name: a("autter.operation.name"), status: a("http.response.status_code"),
-     code: a("autter.error.code"), ms: a("autter.operation.duration_ms"), req: a("autter.request.id")}' | tail -n 20
+cat .autter/runtime/*.jsonl | jq -c 'select(.["autter.operation.kind"]=="request" and .["autter.operation.outcome"]=="failed")
+  | {name: .["autter.operation.name"], status: .["http.response.status_code"],
+     code: .["autter.error.code"], ms: .["autter.operation.duration_ms"], req: .["autter.request.id"]}' | tail -n 20
 ```
 
 **Slowest routes** (count, worst duration)
 
 ```bash
-cat .autter/runtime/*.jsonl | jq -s -c "$A"' map(select(a("autter.operation.kind")=="request"))
-  | group_by(a("autter.operation.name"))
-  | map({name: (.[0] | a("autter.operation.name")), n: length,
-         max_ms: (map(a("autter.operation.duration_ms") // 0) | max)})
+cat .autter/runtime/*.jsonl | jq -s -c 'map(select(.["autter.operation.kind"]=="request"))
+  | group_by(.["autter.operation.name"])
+  | map({name: (.[0] | .["autter.operation.name"]), n: length,
+         max_ms: (map(.["autter.operation.duration_ms"] // 0) | max)})
   | sort_by(-.max_ms) | .[:10][]'
 ```
 
@@ -72,19 +84,19 @@ cat .autter/runtime/*.jsonl | jq -s -c "$A"' map(select(a("autter.operation.kind
 
 ```bash
 RID='paste-the-request-id'
-cat .autter/runtime/*.jsonl | jq -c --arg rid "$RID" "$A"' select(a("autter.request.id")==$rid)'
+cat .autter/runtime/*.jsonl | jq -c --arg rid "$RID" 'select(.["autter.request.id"]==$rid)'
 ```
 
 The request id comes from the `x-request-id` response header or the
 `requestId` field of an error response body. Child operations started with
 `fork`, `runInBackground` or a queue carrier share it.
 
-**Recent coded errors** (count per code)
+**Recent coded errors** (summaries per code; logger-only exception lines are separate)
 
 ```bash
-cat .autter/runtime/*.jsonl | jq -s -c "$A"' map(select(a("autter.error.code") != null))
-  | group_by(a("autter.error.code"))
-  | map({code: (.[0] | a("autter.error.code")), n: length, last: (.[-1] | a("autter.operation.name"))})
+cat .autter/runtime/*.jsonl | jq -s -c 'map(select(.["autter.error.code"] != null and .["autter.event.type"] == "operation"))
+  | group_by(.["autter.error.code"])
+  | map({code: (.[0] | .["autter.error.code"]), n: length, last: (.[-1] | .["autter.operation.name"])})
   | sort_by(-.n)[]'
 ```
 
@@ -110,5 +122,5 @@ and its declared why/fix, steps (which failed, which took longest), inline
   copy them into files, commits, issues, PR descriptions or other tools, and
   never send them to any service.
 - Never commit `.autter/`. If it is not ignored, propose adding `.autter/` to
-  `.gitignore`.
+  `.gitignore` (the Runtime repository ignores it the same way).
 - Read-only: do not edit, truncate or delete the files unless the user asks.

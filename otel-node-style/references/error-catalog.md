@@ -53,6 +53,7 @@ export const billingErrors = defineRuntimeErrors("billing", {
 });
 
 throw billingErrors.declined();               // code "billing.declined"
+throw billingErrors.declined({ cause: stripeError, internal: { chargeId } }); // per-throw extras
 throw billingErrors.limit({ plan: "free" });  // code "billing.limit"
 ```
 
@@ -69,6 +70,11 @@ throw new RuntimeError({
   internal: { sku },          // span only, redacted; never in logs or responses
 });
 ```
+
+`internal` is not enumerable, so `JSON.stringify` and loggers skip it too.
+Catalogs come from `@autter/runtime-node`, `@autter/runtime-next/server` and
+`@autter/runtime-edge` with the same API, so one catalog module can serve Node
+and edge code.
 
 - `message`, `why`, `fix` and `link` are **sent to clients** by
   `autterErrorResponse()` / `toClientError()`. Write them for the person who
@@ -96,8 +102,11 @@ If in doubt, leave it `false`. Marking a defect as expected hides it from RCA.
 
 ## Migrating existing `AppError` / `HttpError` classes
 
-`captureException` duck-types `code`, `why`, `fix`, `link`, `status` and
-`expected` on **any** error object, so existing classes keep working.
+`captureException` duck-types `code`, `why`, `fix`, `link`, `status` (or
+`statusCode`) and `expected` on **any** error object, so existing classes keep
+working. Foreign codes that fail the pattern (`ECONNREFUSED`, `42P01`) are
+ignored silently, and `isRuntimeErrorLike(err)` tells you whether an error has
+any of these fields.
 
 1. Keep the class, its name, its constructor and its **message text exactly**.
    Clients, tests and support docs may match on the message.
@@ -131,7 +140,13 @@ The client body is
 `internal`, stacks and causes are never included.
 
 - **No error handler yet (Express):** mount `app.use(autterErrorResponse())`
-  after all routes.
+  after all routes. Status is the error's own 4xx/5xx `status`, else 500.
+- **Capture:** by default `autterErrorResponse` reports errors with status ≥ 500,
+  every `RuntimeError` and any error with a valid code through
+  `captureException`, **once** even if a handler already captured it, and
+  records the error on the request summary. Pass `capture: false` or a
+  predicate `(err) => boolean` to change what is reported. Remove the app's own
+  duplicate capture at that boundary.
 - **Existing handler:** keep it, its status mapping and its response shape
   unless the user asks to change the shape. Use `toClientError` for the body
   only where the shape matches, otherwise add `requestId` to the existing body:
@@ -144,10 +159,11 @@ The client body is
   });
   ```
 
-- Check the installed JSDoc/types of `autterErrorResponse` to see whether it
-  captures the exception. If it does, remove the duplicate capture at that
-  boundary. Never capture the same error twice.
-- 5xx bodies for uncoded errors must stay generic. Check what the installed
-  `toClientError` returns for a plain `Error`; if it echoes the raw message,
-  map uncoded 5xx errors to a generic message yourself. Never send a database
-  driver's `err.message` to a client.
+- Fastify: call `toClientError(err, runtimeContext.requestId)` in the
+  existing `setErrorHandler`; Next.js route handlers and edge code use
+  `toClientError` (or `withAutter`'s `errorResponse: true`) the same way.
+- `toClientError` keeps the `message` (and `why`/`fix`/`link`) only for
+  declared errors: a `RuntimeError`, an error with a valid code, or an error
+  with a 4xx `status`. Anything else (a plain `Error`, an uncoded 5xx) gets
+  `"Internal Server Error"`, so a database driver's message never reaches the
+  client.

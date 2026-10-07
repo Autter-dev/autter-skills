@@ -140,13 +140,12 @@ When the task is a production error, read Runtime data before guessing:
 | Need | Tool |
 | --- | --- |
 | Error groups for the repo | `list_runtime_issues` (`repo`, optional `severity`, `status`, `environment`, `days`) |
-| One request: summary, child operations, inline logs, linked issues and browser events | `getRuntimeRequest` (request id from an error response's `requestId` or the `x-request-id` header) |
-| The cited evidence behind an issue's analysis: declared fields, failing requests, failing-vs-healthy comparison, browser side, timeline, correlated change, traces | `getIssueEvidencePack` (issue id) |
+| One request: summary, child operations, inline logs, linked issues and browser events | `get_runtime_request` (request id from an error response's `requestId` or the `x-request-id` header) |
+| The cited evidence behind an issue's analysis: declared fields, failing requests, failing-vs-healthy comparison, browser side, timeline, correlated change, traces | `get_issue_evidence_pack` (issue id) |
 
 The request and evidence-pack tools need a backend deployment that includes
-them. Inspect the advertised tool list and use the names it shows (this server
-otherwise uses snake_case, e.g. `get_runtime_request`,
-`get_issue_evidence_pack`); if they are absent, say so and continue with
+them. Inspect the advertised tool list; if a name differs, use the one the
+server advertises. If they are absent, say so and continue with
 `list_runtime_issues` and the code.
 
 Issue results can include `code`, `why`, `fix`, `link`, `expected`, the

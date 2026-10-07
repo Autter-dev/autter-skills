@@ -9,16 +9,18 @@ metadata:
 
 # Edge / fetch-only runtime style
 
-`@autter/runtime-edge` has zero dependencies and uses only `fetch`. It emits
-one request summary per request, captures errors (including coded errors) and
-sends them to `/v1/logs`. It does **not** send traces or metrics, so route
-statistics for an edge service come from its request summaries.
+`@autter/runtime-edge` has zero dependencies, no Node APIs and no
+AsyncLocalStorage. It emits one request summary per request (always kept),
+captures exceptions as promoted log records, and sends everything to
+`/v1/logs`. It sends **no traces or metrics**: records carry no trace ids,
+there are no steps or child operations, and route statistics for an edge
+service come from its request summaries.
 
 | Requirement | Version |
 | --- | --- |
 | `@autter/runtime-edge` | **1.0.0+** |
-| Next.js `middleware.ts` / edge routes | `@autter/runtime-next` **1.5.0+** (`/edge` re-export) |
-| Ingester (self-hosted) | **1.5.0+**: promotes edge error records to issues and stores request columns |
+| Next.js `middleware.ts` / `runtime = "edge"` routes | `@autter/runtime-next` **1.5.0+** (`/edge` re-exports runtime-edge) |
+| Ingester (self-hosted too) | **1.5.0+**: promotes edge exceptions to issues and stores request columns |
 
 Use this skill only for code that runs in an edge or fetch-only runtime. Node
 servers (including Next.js Node routes) use `otel-node-style`; browser code
@@ -28,29 +30,27 @@ thing: keep it as documented in `otel-browser-style`.
 ## 1. Check the installed package
 
 Install with the project's package manager (`npm install @autter/runtime-edge@^1.0.0`;
-Deno: `npm:@autter/runtime-edge@^1.0.0` in the import map), then check:
+Deno: `npm:@autter/runtime-edge@^1.0.0` in the import map), then check what is
+installed, not `latest` or a range:
 
 ```bash
 npm ls @autter/runtime-edge @autter/runtime-next
-node -e 'import("@autter/runtime-edge").then(m=>console.log(["withAutter","RuntimeError","defineRuntimeErrors","toClientError"].filter(k=>!(k in m))))'
+node -e 'import("@autter/runtime-edge").then(m=>console.log(["withAutter","RuntimeError","defineRuntimeErrors","toClientError","isRuntimeErrorLike","CODE_PATTERN"].filter(k=>!(k in m))))'
 ```
 
-An empty list means the APIs exist. Then read the installed
-`withAutter` declaration (`node_modules/@autter/runtime-edge/dist/*.d.ts`):
-its return type and options decide the glue code below. If it differs from
-these snippets, follow the installed types and package README and tell the
-user. If the package cannot be installed, stop and report edge capture as
-pending; do not hand-roll an OTLP client.
+An empty list means the APIs exist. If the package cannot be installed, stop
+and report edge capture as pending; do not hand-roll an OTLP client.
 
 ## 2. Bind the server key by name
 
 The edge package needs a **server** key (`autter_rt_…`). It is secret: never
 in client bundles, `wrangler.toml` `vars`, `NEXT_PUBLIC_*` or committed files.
-Ask the user to set it themselves; you only reference the name:
+Ask the user to set it themselves; you only reference the name. Without a key
+nothing is exported (one console warning).
 
 | Runtime | Where the user sets `AUTTER_RUNTIME_KEY` | How code reads it |
 | --- | --- | --- |
-| Cloudflare Workers | `wrangler secret put AUTTER_RUNTIME_KEY`; local: gitignored `.dev.vars` | `env.AUTTER_RUNTIME_KEY` |
+| Cloudflare Workers | `npx wrangler secret put AUTTER_RUNTIME_KEY`; local: gitignored `.dev.vars` | `env.AUTTER_RUNTIME_KEY` (options as a function of `env`) |
 | Vercel Edge / Next.js middleware | Project → Settings → Environment Variables | `process.env.AUTTER_RUNTIME_KEY` |
 | Deno / Deno Deploy | Project env vars / shell | `Deno.env.get("AUTTER_RUNTIME_KEY")` |
 | Bun | shell or gitignored `.env` | `process.env.AUTTER_RUNTIME_KEY` |
@@ -59,109 +59,110 @@ Check `.gitignore` covers `.dev.vars` / `.env` before the user creates them.
 
 ## 3. Wrap the handler
 
-`withAutter(options, handler)` calls `handler(request, env, ctx, rt)`. `rt`
-is the request's explicit context (there is no AsyncLocalStorage at the edge):
-`rt.set(ctx)`, `rt.outcome(status, msg?)`, `rt.info/warn(msg, attrs?)`,
-`rt.error(err, attrs?)`, `rt.captureException(err)`, `rt.requestId`. Pass `rt`
-down to helpers that need it.
+`withAutter(options, handler)` — `options` is an object **or a function of
+`env`** (Workers bindings exist only per request). `handler(request, env, ctx, rt)`
+returns a `Response`. The result is a **callable handler that is also a
+`{ fetch }` object** with `flush(): Promise<void>`, so the same value works as
+a Workers/Bun default export, a Next.js middleware export and a `Deno.serve`
+callback. Delivery uses `ctx.waitUntil` (Workers) or the `NextFetchEvent`
+passed as the second argument (Next.js); without either, it is fire-and-forget.
+
+`rt` is the request context: `rt.set(ctx)`, `rt.outcome(status, msg?)`,
+`rt.info(msg, attrs?)` (folded into the summary), `rt.warn(msg, attrs?)`
+(folded and exported), `rt.error(err, attrs?)` (like warn at error level, and
+attaches the error's code/why/fix to the summary),
+`rt.captureException(err, attrs?)` (an occurrence) and `rt.requestId`. Pass
+`rt` down to helpers that need it.
 
 **Cloudflare Workers**
 
 ```ts
-import { env } from "cloudflare:workers";
 import { withAutter } from "@autter/runtime-edge";
 import { billingErrors } from "./errors";
 
-export default {
-  fetch: withAutter(
-    { apiKey: env.AUTTER_RUNTIME_KEY, service: "edge-api", release: env.GIT_SHA },
-    async (request, env, ctx, rt) => {
-      rt.set({ colo: { country: request.cf?.country } }); // coarse only
-      if (!(await chargeOk(request, env))) throw billingErrors.declined();
-      return new Response("ok");
-    },
-  ),
-};
+export default withAutter(
+  (env: Env) => ({ apiKey: env.AUTTER_RUNTIME_KEY, service: "edge-api", release: env.GIT_SHA }),
+  async (request, env, ctx, rt) => {
+    rt.set({ colo: request.cf?.colo }); // coarse only
+    if (!(await chargeOk(request, env))) throw billingErrors.declined();
+    return new Response("ok");
+  },
+);
 ```
-
-If the installed `withAutter` already returns a `{ fetch }` handler, use
-`export default withAutter(…)` instead. Older Wrangler/compat dates without
-`cloudflare:workers` `env`: check whether the options accept a function of
-`env`; do not read the key at module scope from anywhere else.
 
 **Vercel Edge / Next.js `middleware.ts`**
 
 ```ts
-import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { withAutter } from "@autter/runtime-next/edge";
+import { withAutter } from "@autter/runtime-next/edge"; // or "@autter/runtime-edge"
 
-const handle = withAutter(
-  { apiKey: process.env.AUTTER_RUNTIME_KEY!, service: "web-middleware" },
-  async (request, _env, _ctx, rt) => {
-    rt.set({ section: new URL(request.url).pathname.split("/")[1] ?? "" });
+export default withAutter(
+  { apiKey: process.env.AUTTER_RUNTIME_KEY, service: "web-middleware" },
+  async (request, _event, _ctx, rt) => {
+    // existing middleware logic, unchanged
     return NextResponse.next();
   },
 );
-
-export function middleware(request: NextRequest, event: NextFetchEvent) {
-  return handle(request, {}, event); // event.waitUntil carries the flush
-}
 export const config = { matcher: ["/((?!_next/|favicon.ico|api/autter-runtime).*)"] };
 ```
 
-Keep the existing middleware logic and `matcher`; wrap it rather than replacing
-it. Exclude static assets and the browser relay route from the matcher.
+If the file exports a named `middleware`, use `export const middleware =
+withAutter(…)`. Keep the existing logic and `matcher`; exclude static assets
+and the browser relay route.
 
 **Deno / Bun**
 
 ```ts
 import { withAutter } from "@autter/runtime-edge";
 
-const handle = withAutter(
-  { apiKey: Deno.env.get("AUTTER_RUNTIME_KEY")!, service: "deno-api" },
+const handler = withAutter(
+  { apiKey: Deno.env.get("AUTTER_RUNTIME_KEY"), service: "deno-api" },
   async (request, _env, _ctx, rt) => app(request, rt),
 );
-const ctx = { waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) };
-Deno.serve((request) => handle(request, {}, ctx));
-// Bun: export default { fetch: (request: Request) => handle(request, {}, ctx) };
+Deno.serve(handler);                 // Bun: Bun.serve({ fetch: handler })
+// on shutdown: await handler.flush();
 ```
 
-Long-running Deno/Bun servers have no `waitUntil`; the shim above lets the
-flush finish in the background. Also flush on shutdown if the installed
-package exposes a flush.
+### Options
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `service`, `environment`, `release` | —, `production`, — | resource attributes |
+| `endpoint` | `https://otlp.autter.dev` | only for a self-hosted ingester the user named |
+| `ignore` | `[]` | path globs not summarised (`*` one segment, `**` any depth): health checks only |
+| `routeOf(request)` | pathname with ids → `:id` | return the route template for `http.route` and the summary name |
+| `requestIdHeader` | `x-request-id` | honoured if it matches `^[\w.-]{8,128}$`, else a UUID; echoed, and added to `Access-Control-Expose-Headers` when the response has CORS headers |
+| `errorResponse` | `false` | answer thrown errors with `toClientError` JSON instead of rethrowing |
+| `minLevel`, `console`, `redactAttributes`, `maxQueue` | `debug`, `false`, `true`, `200` | plain-message filter, JSON console lines, redaction, per-isolate buffer (1 MiB cap) |
 
 ## 4. Coded errors and responses
 
-Catalogs are the same as on Node (shared code), so one catalog file can serve
-both runtimes when the package boundaries allow it. Follow
+The coded-error API (`RuntimeError`, `defineRuntimeErrors`, `isRuntimeErrorLike`,
+`toClientError`, `CODE_PATTERN`) is the same as `@autter/runtime-node`, so one
+catalog module can serve Node and edge code. Follow
 `otel-node-style/references/error-catalog.md` for code rules and `expected`.
 
-```ts
-import { defineRuntimeErrors, toClientError } from "@autter/runtime-edge";
+Errors thrown from the handler are captured, recorded on the summary and
+rethrown. With `errorResponse: true` they are answered instead with
+`{ "error": { "message", "code"?, "why"?, "fix"?, "link"?, "requestId"? } }`
+(undeclared errors such as a plain `Error` get `"Internal Server Error"`; never
+`internal` or stacks). Prefer that option over a hand-written catch. If the
+app already builds its own error responses, keep them and call
+`rt.captureException(err)` once in that catch.
 
-export const billingErrors = defineRuntimeErrors("billing", {
-  declined: { status: 402, message: "Payment declined", expected: true },
-});
-
-// in a catch that returns a response instead of rethrowing:
-rt.captureException(err);
-const status = typeof (err as { status?: unknown }).status === "number" ? (err as { status: number }).status : 500;
-return Response.json(toClientError(err, rt.requestId), { status });
-```
-
-The body is `{ "error": { "message", "code"?, "why"?, "fix"?, "link"?, "requestId"? } }`.
-Never return `internal`, stacks or raw upstream messages. Capture once per error.
+Outcome: explicit `rt.outcome` wins; else an `expected` coded error →
+`degraded`, a thrown error or status ≥ 500 → `failed`, aborted → `cancelled`,
+otherwise `succeeded`.
 
 ## 5. Privacy and limits
 
-- Context is bounded and redacted before sending, and again at ingestion. Still
-  never send bodies, cookies, auth headers, emails or full URLs with query
-  strings. Country-level geo only.
-- Summaries are always kept; there is no sampling. Use the `ignore` option (if
-  the installed type has one) or the middleware `matcher` only to skip health
-  checks and static assets.
-- Delivery is best effort and bounded by the runtime's `waitUntil` budget.
+- Context is redacted and bounded before sending, and again at ingestion.
+  Still never send bodies, cookies, auth headers, emails or full URLs with
+  query strings. Country/colo-level geo only.
+- Summaries are always kept; there is no sampling. Use `ignore` or the
+  middleware `matcher` only to skip health checks and static assets.
+- Each export makes at most two attempts; undelivered records are dropped with
+  a console warning. Delivery is bounded by the runtime's `waitUntil` budget.
 
 ## Selftest path (temporary — delete after verification)
 
@@ -194,10 +195,12 @@ curl -s 'localhost:8787/__autter-selftest?variant=beta'
 2. **Runtime → Logs → Requests** shows `GET /__autter-selftest` summaries with
    that request id and the inline message, service and release.
 3. **Runtime → Errors** shows one `autter_selftest.failed` issue with two
-   occurrences and the declared why. No issue with stored summaries usually
+   occurrences and the declared why. Stored summaries but no issue usually
    means a pre-1.5.0 ingester (no log promotion): report codes as pending.
-4. Nothing arrives: check the key binding name, that the handler is actually
-   wrapped (middleware `matcher`), and the runtime's console for a `401`.
+4. Nothing arrives: check the key binding name (the one-time "no apiKey"
+   warning), that the handler is actually wrapped (middleware `matcher`), and
+   the runtime console for export warnings. Deno/Bun: `await handler.flush()`
+   before concluding.
 5. **Delete the selftest branch**, and remind the user to keep `.dev.vars`/`.env`
    uncommitted.
 

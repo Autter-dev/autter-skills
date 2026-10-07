@@ -87,7 +87,7 @@ import { autterErrorFromResponse, captureException } from "@autter/runtime-brows
 
 const res = await fetch("/api/checkout", { method: "POST", body });
 if (!res.ok) {
-  const err = await autterErrorFromResponse(res); // reads the body; use res.clone() if you still need it
+  const err = await autterErrorFromResponse(res); // reads a clone; res stays readable
   if (res.status >= 500) captureException(err);  // 4xx coded `expected` errors are usually already recorded server-side
   showError(err.message);
 }
@@ -95,6 +95,11 @@ if (!res.ok) {
 
 - The server body shape is `{ "error": { "message", "code"?, "why"?, "fix"?,
   "link"?, "requestId"? } }` (from `autterErrorResponse()` / `toClientError`).
+  A non-JSON body falls back to the status text. The returned `Error` carries
+  `status`, `code`/`why`/`fix`/`link` and the body's `requestId` (else the
+  `x-request-id` response header), which `captureException`
+  records as `autter.request.id`. Next.js client components import it from
+  `@autter/runtime-next/client`.
   Show `message` (and `fix` if the product wants it); never render raw server
   stacks.
 - Do not double-report: the server already captured the error with the same
