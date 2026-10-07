@@ -1,9 +1,9 @@
 ---
 name: otel-generic-style
-description: Set up Autter Runtime for backend languages without a dedicated style skill using OpenTelemetry. Configure errors, usage, LLM tracing and optional OTLP logs, with capability and stored-evidence checks.
+description: Set up Autter Runtime for backend languages without a dedicated style skill using OpenTelemetry. Configure errors with codes, usage, LLM tracing, OTLP logs and request summaries, with capability and stored-evidence checks.
 metadata:
-  version: "1.3.0"
-  tags: [autter, telemetry, opentelemetry, otlp, generic, llm, logging]
+  version: "1.4.0"
+  tags: [autter, telemetry, opentelemetry, otlp, generic, llm, logging, requests, errors]
   author: autter
 ---
 
@@ -42,6 +42,48 @@ IDs in **Runtime → Logs**, independently from traces, metrics and LLM calls.
 Use synthetic tests only in isolation, existing traffic in production. The
 platform readers/fix worker also need the matching deployment. An unavailable
 source is not a healthy empty source; refresh evidence/rerun RCA for later logs.
+
+## Coded errors and request summaries
+
+These are attribute contracts any OTel SDK can send. Codes and request columns
+are stored only by a **1.5.0+** ingester (self-hosted: migrations `0012`,
+`0013`); older ingesters ignore them, so report them as pending there.
+
+**Error codes** on the exception event (preferred) or the span:
+
+| Attribute | Value |
+| --- | --- |
+| `autter.error.code` | `^[a-z][a-z0-9_]*(\.[a-z0-9_]+){0,3}$`, ≤ 80 chars: namespaced, stable, no ids/PII (`billing.declined`) |
+| `autter.error.why` / `.fix` / `.link` | Declared cause / remedy / docs URL (≤ 1000 / 1000 / 500 chars), no PII |
+| `autter.error.expected` | `true` for business failures: recorded, never an incident |
+
+Map an existing error type's code in the central error handler (JVM:
+`span.recordException(e, Attributes.of(stringKey("autter.error.code"), code))`;
+.NET: `activity.AddException(e, new TagList { { "autter.error.code", code } })`
+on .NET 9+, otherwise an `exception` `ActivityEvent` with those tags). One code
+= one issue per service. Never invent codes for third-party errors; keep
+existing messages unchanged.
+
+**Request summaries** are one OTLP log record per request, emitted when the
+response completes, from a request filter/middleware inside the HTTP
+instrumentation (so trace ids attach). Attributes:
+
+| Attribute | Value |
+| --- | --- |
+| `autter.event.type` | `"operation"` |
+| `autter.operation.kind` | `"request"` |
+| `autter.operation.id` | new random id per request |
+| `autter.operation.name` | `"<METHOD> <route template>"`, e.g. `"GET /orders/{id}"` |
+| `autter.operation.outcome` | `succeeded`, `failed` (status ≥ 500 or unhandled), `degraded` (expected coded error), `cancelled` (client aborted) |
+| `autter.operation.duration_ms` | number |
+| `autter.request.id` | incoming `x-request-id` if it matches `^[\w.-]{8,128}$`, else a new UUID; also set on the server span and echoed as a response header |
+| `http.request.method`, `http.route`, `http.response.status_code` | request facts; route is the template, never the raw path |
+| `autter.error.code` | optional, when the request failed with a coded error |
+
+Use the logs bridge's structured attributes (MDC/scope values are not enough
+unless the bridge exports them as attributes). Summaries are always kept: skip
+only health/metrics routes. Never include bodies, headers, emails or tokens.
+Cross-origin browsers need `Access-Control-Expose-Headers: x-request-id`.
 
 ## Detection and telemetry
 
@@ -260,6 +302,11 @@ the same route — name `chat autter-selftest`, `gen_ai.system` and
 real model is touched. Never commit or deploy the route; it's
 unauthenticated and triggers telemetry sends.
 
+Also add `autter.error.code: "autter_selftest.message"` to the selftest
+exception event. When the logs pipeline and request filter are wired, the
+selftest request itself produces a request summary; force-flush the logger
+provider too where the SDK allows (the summary may ship on the next batch).
+
 ## Verify
 
 1. Run the service with the real `AUTTER_RUNTIME_KEY` and these
@@ -282,12 +329,19 @@ unauthenticated and triggers telemetry sends.
    `/__autter-selftest` where the SDK emits the HTTP duration histogram.
    Traces arriving without metrics means the metrics side isn't wired or
    the SDK doesn't emit the instrument — flag which one to the user.
-5. LLM-wired services: the fake `autter-selftest` call appears under
+5. Logs (when configured): call the route with
+   `-H 'x-request-id: autter-selftest-0001'`, confirm the response echoes it,
+   and find the `GET /__autter-selftest` summary with that request id under
+   **Runtime → Logs → Requests** (self-hosted: `runtime_logs` with
+   `kind='request'`). On a 1.5.0+ ingester the selftest issue shows code
+   `autter_selftest.message`. Traces without logs means no logs
+   provider/bridge; an empty preflight `200` on `/v1/logs` does not prove it.
+6. LLM-wired services: the fake `autter-selftest` call appears under
    **Runtime → LLM** (self-hosted: a `runtime_llm_calls` row with the
    returned trace id). Remember the selftest ran with sampling forced up —
    real LLM calls only survive the default 1% run with the Step 7
    exemption in place; double-check it before trusting this signal.
-6. Trigger one real error too and confirm the SDK's exception-recording
+7. Trigger one real error too and confirm the SDK's exception-recording
    call fired on that span — the selftest proves transport, not your
    error-handler wiring.
-7. **Delete the selftest route** and unset the override env vars.
+8. **Delete the selftest route** and unset the override env vars.
