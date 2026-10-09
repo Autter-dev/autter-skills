@@ -1,8 +1,8 @@
 ---
 name: autter-runtime-setup
-description: Set up repository-scoped Autter Runtime using application instrumentation, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
+description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
 metadata:
-  version: "1.5.0"
+  version: "1.6.0"
   author: autter
   tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 ---
@@ -108,12 +108,15 @@ workspace/package separately. While inventorying, also note which services
 `@anthropic-ai/sdk`, `@google/genai`, `langchain`, Python's
 `openai`/`anthropic`/`litellm`/`google-genai`, Go's `openai-go`, Bedrock
 SDKs, or raw HTTP calls to provider endpoints — those services get LLM
-tracing wired alongside errors/usage. Show the user the list before
+tracing wired alongside errors/usage. Also note each service's HTTP
+framework and its health, readiness and metrics paths; the request boundary
+and its `ignore` list depend on them. Show the user the list before
 proceeding, e.g.:
 
-> Found: `apps/api` (Node/Express, calls OpenAI), `apps/web` (Next.js),
-> `worker/` (Python/Celery). I'll wire up all three — including LLM
-> tracing for `apps/api` — let me know if you want to skip any.
+> Found: `apps/api` (Node/Express, calls OpenAI, probe `/healthz`),
+> `apps/web` (Next.js), `worker/` (Python/Celery). I'll wire up all three,
+> including request summaries for `apps/api` and the Next.js route handlers
+> and LLM tracing for `apps/api`. Let me know if you want to skip any.
 
 ## Step 2: Detect stack and load the matching style skill
 
@@ -124,6 +127,7 @@ style skill **before editing anything**:
 | --- | --- |
 | Node.js: Express, Fastify, Koa, NestJS, plain `http` | `otel-node-style` |
 | Next.js (any router) | `otel-node-style` (has a dedicated Next.js section) |
+| Cloudflare Workers, Vercel Edge, Deno, Bun | `otel-node-style` (Edge runtimes section, `@autter/runtime-edge`) |
 | Browser: React/Vue/Svelte/Angular/vanilla SPA, static site | `otel-browser-style` |
 | Python: FastAPI, Flask, Django, plain WSGI/ASGI | `otel-python-style` |
 | Go or Rust (any framework) | `otel-go-rust-style` |
@@ -190,6 +194,38 @@ for other backends follow their OTLP logs section and the
 - Await logs and the existing trace/metric flush at the end of short-lived
   invocations, and shutdown after draining long-running services. Report
   delivery failures and buffered/dropped records. Telemetry is best effort.
+
+### Request summaries (default for every HTTP service)
+
+**Runtime → Requests & logs** lists one summary per HTTP request (route,
+status, outcome, duration, request id, context, inline messages, AI usage)
+and per-route counts. That view stays empty unless the service mounts a
+request boundary, even when traces, metrics and operation logs all work. Wire
+it as part of setup without waiting to be asked:
+
+- Check `GET https://otlp.autter.dev/v1/compat?features=request_summaries`
+  (public, no key). `available: true` means the ingester is ready. A `404`
+  means an ingester older than 1.5.0: wire the SDK anyway and report the view
+  as pending an ingester upgrade. Self-hosted ingesters need 1.5.0 with
+  migrations `0012` and `0014`.
+- Node/Next.js/edge: upgrade to `@autter/runtime-node`/`-next` **1.5.0+**
+  (`@autter/runtime-edge` 1.0.0+) and mount `autterRequests`,
+  `autterFastify`, `withRuntimeRequest` or `withAutter` per the Node style
+  skill's request summaries reference. Ignore probe and metrics paths, since
+  summaries are never sampled. Do not replace the app's error handler or
+  response format without the user's go-ahead.
+- Other languages have no Autter package for this. A request summary is an
+  OTLP log record on `/v1/logs` with `autter.event.type=operation`,
+  `autter.operation.kind=request`, `autter.operation.name` (`METHOD /route`),
+  `autter.operation.outcome`, `autter.operation.duration_ms`,
+  `autter.request.id`, `http.request.method`, `http.route` and
+  `http.response.status_code`. Add one only where the service already exports
+  OTLP logs and has a single request middleware to emit it from. Otherwise
+  report request summaries as not set up for that service rather than adding
+  a logs pipeline nobody asked for.
+- Frontends: `@autter/runtime-browser` 1.4.0+ records the `x-request-id` on
+  failed fetch/XHR calls, which links a browser error to its server request.
+  The Node middleware exposes the header to CORS automatically.
 
 **LLM calls.** Autter records every LLM/GenAI call with model, tokens,
 latency, and a USD cost — then watches for spend spikes, failing models,
@@ -296,6 +332,9 @@ its value:
 curl -s https://otlp.autter.dev/healthz
 # → 200 {"ok":true,...} — the ingester itself is reachable
 
+curl -s "https://otlp.autter.dev/v1/compat?features=request_summaries,operation_logging"
+# → per-feature "available": true/false; a 404 means an ingester older than 1.5.0
+
 curl -s -o /dev/null -w "%{http_code}\n" -X POST \
   https://otlp.autter.dev/v1/traces \
   -H "Authorization: Bearer $AUTTER_RUNTIME_KEY" \
@@ -363,6 +402,12 @@ confirm **every applicable signal** per the style skill's Verify steps:
    and captured trace/operation IDs. Confirm the failed issue's **Operation
    evidence** separately. Refresh or rerun analysis for later arrivals. An
    unavailable source and an empty available source are different results.
+5. **Request summaries** (HTTP services): the selftest request runs through
+   the request boundary. Search its `x-request-id` in **Runtime → Requests &
+   logs → Requests** and confirm one summary for the selftest route with
+   status, duration and outcome. Stored operations with no request summary
+   mean the boundary is not mounted ahead of the route, the path is ignored,
+   or an older SDK was resolved.
 
 Two things the style skills handle that you shouldn't improvise around:
 
@@ -427,7 +472,7 @@ Rules for the edit:
 - **Match the repo's stack**: name the actual package/functions the style
   skill wired (`captureException`, `runtimeLogger`, `withRuntimeOperation` for
   supported JS installs; logs exporters and trace events for raw OTel stacks).
-  Drop logging/operation lines if capability is pending, and LLM/browser lines
+  Drop logging/operation/request lines if capability is pending, and LLM/browser lines
   when they don't apply. Do not record uninstalled APIs as repo conventions.
 
 Block to write (adjust the function names to the stack you wired):
@@ -436,7 +481,7 @@ Block to write (adjust the function names to the stack you wired):
 <!-- autter-runtime:begin -->
 ## Autter Runtime instrumentation (keep new code instrumented)
 
-This repo reports errors, diagnostic logs, operations, usage, and LLM telemetry to Autter Runtime. Keep new
+This repo reports errors, request summaries, diagnostic logs, operations, usage, and LLM telemetry to Autter Runtime. Keep new
 code at the same coverage as the code instrumented during setup — do not add
 functions that can fail silently.
 
@@ -453,6 +498,11 @@ When you write or change code here:
   `runtimeLogger.error` is also a diagnostic record; retain `captureMessage`
   only for intentional issue-producing messages.
   Favour a few high-signal events over one per log line.
+- **Requests:** every HTTP route runs inside the request boundary
+  (`autterRequests` / `autterFastify` mounted before routers;
+  `withRuntimeRequest` around each new Next.js route handler). Add new probe or
+  metrics endpoints to its `ignore` list. Attach request context with
+  `runtimeContext.set(...)`, not by logging it separately.
 - **Operations:** wrap meaningful requests, jobs, consumers, and cron ticks with
   `withRuntimeOperation(name, fn, context)`, stable names and measured steps.
   Declare failed/degraded/cancelled/pending results explicitly: a returned
@@ -490,6 +540,10 @@ Tell the user, concisely:
 
 - Which services got server telemetry (OTel traces/metrics) vs. browser
   telemetry (errors/usage) vs. both.
+- Which services emit request summaries and through which boundary, which
+  paths are ignored, and what is not covered (Pages Router API routes, server
+  actions, Koa or non-Node services without a request middleware). Name the
+  Requests view as pending when the ingester or SDK is older than 1.5.0.
 - Which services have structured logs and operation summaries, which SDK and
   deployed capabilities were verified, and which upgrades/redeploys are pending.
   Distinguish stored logs, linked evidence, completed analysis, and a validated

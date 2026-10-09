@@ -35,7 +35,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 | --- | --- |
 | [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, repository wiki Markdown, accepted process learnings and team rules, and indexed code/architecture/run commands through Autter MCP. Uses source commits and freshness metadata to ground coding work in how the user works and how the platform is built. |
 | [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, checks installed and deployed capabilities, configures the chosen ingestion path, verifies stored traces/errors, metrics, logs/operations and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
-| [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`. |
+| [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS), Next.js and edge runtimes (Workers, Vercel Edge, Deno, Bun), via `@autter/runtime-node` / `@autter/runtime-next` / `@autter/runtime-edge`, including per-request summaries. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including CSP violations and privacy-conscious recent action context. |
 | [`otel-python-style`](./otel-python-style/) | FastAPI, Flask, Django, plain WSGI/ASGI, via the standard OpenTelemetry Python SDK. |
 | [`otel-go-rust-style`](./otel-go-rust-style/) | Go and Rust backends, via each language's official OTel SDK. |
@@ -132,6 +132,21 @@ Read [Node operation setup](otel-node-style/references/operation-logging.md)
 or [customer logging docs](https://docs.autter.dev/runtime/operation-logging).
 Logs improve the evidence available to RCA and eligible draft fixes; they do
 not prove a diagnosis or a working fix. Delivery is best effort.
+
+## Request summaries
+
+Runtime's **Requests & logs** view shows one summary per HTTP request and
+per-route counts. It stays empty until the service mounts a request boundary,
+so the setup skills add one by default for every Node, Next.js and edge HTTP
+service: `autterRequests()` for Express, Connect and NestJS; `autterFastify`
+for Fastify; `withRuntimeRequest()` for fetch-style and Next.js route
+handlers; and `withAutter` for edge runtimes. Health, readiness and metrics
+paths are ignored, because summaries are never sampled. This needs SDK
+**1.5.0+** (`runtime-edge` 1.0.0+) and ingester **1.5.0+**, which the skills
+check through the public `/v1/compat` endpoint. Existing error handlers and
+response formats are left alone unless the user agrees to
+`autterErrorResponse()`. See
+[request summaries setup](otel-node-style/references/request-summaries.md).
 
 ## License
 
