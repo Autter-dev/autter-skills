@@ -1,13 +1,23 @@
 ---
 name: otel-node-style
-description: Wire Autter Runtime into Node.js, Next.js and edge runtimes using the official packages. Check installed support, mount request summaries, configure operations and diagnostic logs, and verify errors, usage, requests, and LLM tracing.
+description: Wire Autter Runtime into Node.js, Next.js and edge runtimes using the official packages. Check installed support, keep server error stacks, add Next.js onRequestError, mount request summaries, configure operations and logs, and verify errors, usage, requests, and LLM tracing.
 metadata:
-  version: "1.4.0"
-  tags: [autter, telemetry, nodejs, nextjs, express, fastify, edge, opentelemetry, llm, logging, requests]
+  version: "1.5.0"
+  tags: [autter, telemetry, nodejs, nextjs, express, fastify, koa, edge, opentelemetry, llm, logging, requests, errors, breadcrumbs]
   author: autter
 ---
 
 # Node.js / Next.js style
+
+Read [Server errors setup](references/server-errors.md) for every HTTP
+service. Adding the framework's error hook (`autterErrorHandler`,
+`autterFastifyErrors`, `autterKoa`, `captureRequestError`, or Next.js
+`onRequestError`) is a default setup step: without it, a thrown error reaches
+Autter only as the framework's stackless 500. The hooks need SDK **1.6.0+**;
+check `npm view @autter/runtime-node version` and report them as pending if
+1.6.0 is not published. Next.js apps also need
+`serverExternalPackages: ["@autter/runtime-node"]` in `next.config`, whatever
+SDK version is installed.
 
 Read [Request summaries setup](references/request-summaries.md) for every
 HTTP service. Mounting the request boundary (`autterRequests`,
@@ -51,11 +61,13 @@ and never hardcode it.
 ## Plain Node (Express, Fastify, Koa, NestJS, http)
 
 ```bash
-npm install @autter/runtime-node@^1.5.0
+npm install @autter/runtime-node@^1.6.0
 ```
 
-Use the project's package manager and commit its lockfile. Add `.autter/` to
-`.gitignore`, because 1.5.0 writes local records there in development.
+Use the project's package manager and commit its lockfile. If 1.6.0 is not
+published yet, install `^1.5.0` and report the 1.6.0 features (error hooks,
+unhandled-rejection capture, breadcrumbs) as pending. Add `.autter/` to
+`.gitignore`, because 1.5.0+ writes local records there in development.
 
 Reuse the existing initialization if present. Otherwise, create an instrumentation entry that loads **before** the app. Do not register a second SDK or provider.
 
@@ -119,22 +131,57 @@ user's go-ahead, because it changes error response bodies. Koa and plain
 `initAutterLogging` variant for apps with their own OTel SDK, and
 verification.
 
+### Server errors keep their stacks (always add, 1.6.0)
+
+Add the framework's error hook so a thrown error is recorded with its stack
+on the request span. The framework then answers exactly as before:
+
+```js
+const { autterErrorHandler } = require("@autter/runtime-node");
+
+// Express / Connect: after the routes, before the app's own error handlers.
+app.use(autterErrorHandler()); // calls next(err) unchanged
+// Fastify 4/5: app.register(autterFastifyErrors) — skip if autterFastify is registered
+// Koa 2/3: app.use(autterKoa()) first — records and rethrows
+// NestJS, hapi, others: captureRequestError(err) from the existing error hook
+```
+
+Keep the app's existing error handlers and response format. By default the
+hooks report status 500 or more, `RuntimeError`s and coded errors, so 404s
+and validation failures stay out of issues. An app that already mounts
+`autterErrorResponse()` is covered. A middleware from an earlier setup that
+only calls `captureException(err)` and `next(err)` can be replaced by
+`autterErrorHandler()` in the same position. See the
+[server errors reference](references/server-errors.md) for placement edge
+cases, NestJS, unhandled rejections, Next.js and edge.
+
 ### Capturing handled exceptions
 
-Wrap risky code (or a global error-handling middleware) with:
+Report errors the code catches and handles itself:
 
 ```js
 const { captureException } = require("@autter/runtime-node");
 
-app.use((err, req, res, next) => {
-  captureException(err, { route: req.path });
-  next(err);
-});
+try {
+  await chargeCard(order);
+} catch (err) {
+  captureException(err, { "order.id": order.id });
+  throw err;
+}
 ```
 
-Uncaught exceptions and unhandled rejections that crash the process are
-captured automatically via `process.on("uncaughtExceptionMonitor", ...)` —
-no extra code needed, this is wired inside `initAutterServer`.
+Uncaught exceptions that crash the process are captured automatically via
+`process.on("uncaughtExceptionMonitor", ...)`. From 1.6.0, unhandled promise
+rejections are recorded as errors even when they do not crash the process,
+without changing whether it crashes. Both are wired inside
+`initAutterServer`; opt out of rejection capture with
+`captureUnhandledRejections: false` only if the user asks.
+
+Every `runtimeLogger` entry also becomes a breadcrumb, attached to exceptions
+captured later in the same request (1.6.0, ingester 1.6.0). Add
+`addBreadcrumb({ message, data })` only at a few meaningful steps. Teams that
+want custom grouping can pass `captureException(err, { fingerprint })`;
+offer it, do not add it by default.
 
 ### Diagnostic messages and issue-producing events
 
@@ -304,14 +351,38 @@ follow.
 ## Next.js (any router)
 
 ```bash
-npm install @autter/runtime-next@^1.5.0
+npm install @autter/runtime-next@^1.6.0
 ```
 
-Three files, plus wrapping the route handlers (step 4):
+If 1.6.0 is not published yet, install `^1.5.0`, skip `onRequestError`, and
+report it as pending. `next.config`, three files, plus wrapping the route
+handlers (step 4):
 
-**1. `instrumentation.ts`** (server tracing — runs once, server-side only):
+**0. `next.config`** (one SDK copy — required; the 1.6.0 docs added it and
+1.5.0 installs need it too): merge `"@autter/runtime-node"` into
+`serverExternalPackages`, keeping existing entries:
+
+```js
+// next.config.mjs
+export default {
+  // existing config
+  serverExternalPackages: [/* existing entries */ "@autter/runtime-node"],
+};
+```
+
+Without it, routes use a copy of the SDK that `registerAutter` never
+started: request summaries go to the console and errors are reported twice.
+Next 14.2 uses `experimental: { serverComponentsExternalPackages: [...] }`.
+Browser source maps wrap this same config with `withAutterSourceMaps` from
+`@autter/runtime-cli/next`; follow `otel-browser-style`'s source maps
+reference, including its check that the CLI is published.
+
+**1. `instrumentation.ts`** (server tracing and server errors — runs once,
+server-side only):
 
 ```ts
+import { autterOnRequestError } from "@autter/runtime-next/instrumentation";
+
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { registerAutter } = await import("@autter/runtime-next/server");
@@ -324,7 +395,21 @@ export async function register() {
     });
   }
 }
+
+// Next 15+: errors Next catches in server components, server actions, route
+// handlers and middleware, with their stack (otherwise: stackless 500s).
+export const onRequestError = autterOnRequestError({
+  // Edge runtime only (middleware, edge pages): sent to /v1/logs.
+  edge: { apiKey: process.env.AUTTER_RUNTIME_KEY, service: "<app name>" },
+});
 ```
+
+With no edge code, `export { onRequestError } from
+"@autter/runtime-next/instrumentation"` is enough. Redirects and
+`notFound()` are not reported. Keep an existing `onRequestError` from another
+tool by calling both. Next 14 has no `onRequestError`; list server component
+and server action errors as uncovered there. Details in the
+[server errors reference](references/server-errors.md).
 
 Next.js only calls `register()` when `instrumentationHook` is enabled
 (default on in recent Next.js — check `next.config.js` if it's an older
@@ -364,7 +449,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
 Mount `<AutterErrorBoundary>` near the root layout so it catches render
 errors app-wide — `window.onerror` does **not** fire for React render
 errors, so skipping this boundary silently misses them.
-Also follow `otel-browser-style` for enforced CSP violation capture,
+Also follow `otel-browser-style` for source maps, opt-in breadcrumbs
+(`enableBreadcrumbs` from `@autter/runtime-next/client`) and trace links,
+enforced CSP violation capture,
 fixed `data-autter-action` labels on important controls, `connect-src`
 for the relay, and browser-side verification. Check the installed
 `@autter/runtime-browser` dependency actually supports these features;
@@ -389,8 +476,11 @@ uncovered in the hand-off. `middleware.ts` runs on the edge: wrap it with
 ## Edge runtimes (Cloudflare Workers, Vercel Edge, Deno, Bun)
 
 ```bash
-npm install @autter/runtime-edge@^1.0.0
+npm install @autter/runtime-edge@^1.1.0
 ```
+
+(`^1.0.0` if 1.1.0 is not published yet; `captureEdgeException` then stays
+pending.)
 
 ```ts
 import { withAutter } from "@autter/runtime-edge";
@@ -409,6 +499,11 @@ a **server** key from a secret binding (`wrangler secret put
 AUTTER_RUNTIME_KEY`, or the platform's secret store), never a client key and
 never a value in `wrangler.toml`. Do not install `@autter/runtime-node` in an
 edge bundle.
+
+Errors thrown from the handler are reported by `withAutter`. For scheduled
+and queue handlers outside it, report with `captureEdgeException(options,
+error, attributes?)` (1.1.0) and keep the handler's existing failure
+behavior; see the [server errors reference](references/server-errors.md).
 
 ## Defaults you should know (don't change without asking)
 
@@ -526,6 +621,22 @@ One `curl` of the route exercises everything at once:
   real model touched — force-flushed before it returns, proving GenAI
   spans land as LLM calls. The returned `traceId` is what you look up.
 
+Add a second temporary route, registered with the other routes (before
+`autterErrorHandler` in Express), to verify the error hook. With trace
+propagation enabled in the frontend, the browser selftest calls it too:
+
+```js
+// TEMPORARY autter selftest — delete after verification.
+app.get("/__autter-selftest/error", () => {
+  runtimeLogger.info("autter selftest before server error"); // only with operation logging
+  throw new Error("autter selftest server error");
+});
+```
+
+Next.js: a temporary route handler that throws the same error, wrapped in
+`withRuntimeRequest`. If 1.6.0 is pending, skip this route and report the
+error hooks as pending.
+
 ## Verify
 
 1. Start the app with the instrumentation loaded and
@@ -564,12 +675,19 @@ One `curl` of the route exercises everything at once:
    duration and outcome, and the route under **Routes** after the rollup.
    If operations are stored but there is no request summary, follow the
    troubleshooting list in the request summaries reference.
-6. LLM-wired services: the selftest response's `llmTraceId` call shows up
+6. `curl` `/__autter-selftest/error` once. The app answers with its usual
+   500 response. The issue for `autter selftest server error` shows the
+   thrown `Error` with its stack, once, not a stackless `HttpServerError`
+   for the route; with operation logging, its breadcrumbs include the
+   `runtimeLogger` entry. Next.js: the error also carries `next.route_path`.
+   Errors reported twice or request summaries printed to the console mean
+   `serverExternalPackages` is missing.
+7. LLM-wired services: the selftest response's `llmTraceId` call shows up
    under **Runtime → LLM** as provider/model `autter-selftest` (self-hosted:
    a `runtime_llm_calls` row with that `trace_id`). Traces arriving without
    the LLM call means the ingester predates LLM support — have the user
    update it. Then, if a real (cheap) model call is easy to trigger,
    exercise one and confirm it lands with real token counts and a cost —
    the selftest proves transport, not that every call site got wrapped.
-7. **Delete the selftest route** (and unset `OTEL_LOG_LEVEL`) once all
+8. **Delete both selftest routes** (and unset `OTEL_LOG_LEVEL`) once all
    signals are confirmed.

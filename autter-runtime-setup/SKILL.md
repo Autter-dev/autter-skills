@@ -1,8 +1,8 @@
 ---
 name: autter-runtime-setup
-description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
+description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, error stacks, source maps, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
 metadata:
-  version: "1.6.0"
+  version: "1.7.0"
   author: autter
   tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 ---
@@ -12,10 +12,11 @@ metadata:
 For continuous detection, inventory each service's HTTP framework, outbound
 clients, database driver, queue workers, and profiler. Wire available OTel
 instrumentations so traces explain time spent in dependencies, and set a
-deployment release SHA. The common outcome event, optional profile upload,
-and release keyed source maps are documented in Autter Runtime's
-`docs/CONTINUOUS-DETECTION.md`. Normal Runtime capture and qualified draft
-fixes are enabled by default; caught exception hooks require a separate
+deployment release SHA. The common outcome event and optional profile upload
+are documented in Autter Runtime's `docs/CONTINUOUS-DETECTION.md`; browser
+source maps are uploaded at build time with `@autter/runtime-cli`
+(`docs/SOURCE-MAPS.md`, routed in Step 2). Normal Runtime capture and
+qualified draft fixes are enabled by default; caught exception hooks require a separate
 service opt in because they observe expected throws as well.
 
 For memory pressure in **every backend language**, inspect whether the
@@ -110,13 +111,18 @@ workspace/package separately. While inventorying, also note which services
 SDKs, or raw HTTP calls to provider endpoints — those services get LLM
 tracing wired alongside errors/usage. Also note each service's HTTP
 framework and its health, readiness and metrics paths; the request boundary
-and its `ignore` list depend on them. Show the user the list before
-proceeding, e.g.:
+and its `ignore` list depend on them. For each frontend, note its build tool
+(Vite, webpack, Rollup, Next.js, CRA-style, or none) and where the production
+build runs (which CI workflow or hosting platform); the source-map upload
+hooks into that build. For Next.js, note the Next version and any existing
+`next.config` wrappers or `onRequestError` export. Show the user the list
+before proceeding, e.g.:
 
 > Found: `apps/api` (Node/Express, calls OpenAI, probe `/healthz`),
-> `apps/web` (Next.js), `worker/` (Python/Celery). I'll wire up all three,
-> including request summaries for `apps/api` and the Next.js route handlers
-> and LLM tracing for `apps/api`. Let me know if you want to skip any.
+> `apps/web` (Next.js 15, built on Vercel), `worker/` (Python/Celery). I'll
+> wire up all three, including request summaries and error hooks for
+> `apps/api`, `onRequestError` and source maps for `apps/web`, and LLM
+> tracing for `apps/api`. Let me know if you want to skip any.
 
 ## Step 2: Detect stack and load the matching style skill
 
@@ -128,7 +134,7 @@ style skill **before editing anything**:
 | Node.js: Express, Fastify, Koa, NestJS, plain `http` | `otel-node-style` |
 | Next.js (any router) | `otel-node-style` (has a dedicated Next.js section) |
 | Cloudflare Workers, Vercel Edge, Deno, Bun | `otel-node-style` (Edge runtimes section, `@autter/runtime-edge`) |
-| Browser: React/Vue/Svelte/Angular/vanilla SPA, static site | `otel-browser-style` |
+| Browser: React/Vue/Svelte/Angular/vanilla SPA, static site | `otel-browser-style` (plus its source maps reference when there is a build step) |
 | Python: FastAPI, Flask, Django, plain WSGI/ASGI | `otel-python-style` |
 | Go or Rust (any framework) | `otel-go-rust-style` |
 | Anything else (Java, .NET, PHP, Ruby, Elixir, …) | `otel-generic-style` |
@@ -137,6 +143,18 @@ For a Next.js app, use both `otel-node-style` and the browser capture,
 action-label, and CSP checks in `otel-browser-style`; server tracing alone
 does not capture browser violations. Apply the browser skill to every
 frontend found in the inventory, including a frontend paired with a backend.
+
+Two 1.6.0 routing rules:
+
+- **Every browser service that ships built JavaScript** (Vite, webpack,
+  Rollup, Next.js, CRA-style, anything minified) goes through
+  `otel-browser-style`'s `references/source-maps.md`. Without maps, browser
+  stacks point at minified chunks that RCA and fix agents cannot use.
+- **Every Next.js app** goes through the Next.js steps in `otel-node-style`'s
+  `references/server-errors.md`: `serverExternalPackages:
+  ["@autter/runtime-node"]` in `next.config` and `onRequestError` from
+  `@autter/runtime-next/instrumentation` in `instrumentation.ts`. Its client
+  build also gets `withAutterSourceMaps`.
 
 The style skills above are the ones bundled in this same skill set
 (github.com/Autter-dev/autter-skills) — never substitute a third-party
@@ -226,6 +244,49 @@ it as part of setup without waiting to be asked:
 - Frontends: `@autter/runtime-browser` 1.4.0+ records the `x-request-id` on
   failed fetch/XHR calls, which links a browser error to its server request.
   The Node middleware exposes the header to CORS automatically.
+
+### Runtime 1.6.0: error stacks, source maps, breadcrumbs and trace links
+
+Runtime 1.6.0 ships `@autter/runtime-node`, `@autter/runtime-next` and
+`@autter/runtime-browser` 1.6.0, `@autter/runtime-edge` 1.1.0, the new
+`@autter/runtime-cli` 1.0.0 and ingester 1.6.0. Check before wiring, as for
+request summaries:
+
+- **Ingester:** `GET https://otlp.autter.dev/v1/compat?features=breadcrumbs,source_map_debug_ids,fingerprint_override,browser_trace_propagation`
+  (public, no key). `available: true` per feature means the ingester is
+  ready. `available: false` means an ingester older than 1.6.0 (or with
+  migrations pending), and a `404` one older than 1.5.0: wire the SDKs
+  anyway (older ingesters ignore the new fields) and report those features
+  as pending an ingester upgrade.
+  Self-hosted ingesters need 1.6.0 with migrations
+  `0016-occurrence-frames-fingerprints` and `0017-source-maps-debug-id`, which
+  run at boot. Upgrade the ingester first, then SDKs.
+- **Published packages:** `npm view <package> version` for each package you
+  will install. Install only versions that command shows. For anything not
+  yet published, keep the previous setup working and report the feature as
+  pending that release. Check installed versions in the lockfile or
+  `node_modules`, not the range; add `&sdk=<package>@<installed version>` to
+  the compat URL to get the ingester's `issues` for it.
+- **Default steps** (wire them without waiting to be asked, once available):
+  - server error hooks for every Node HTTP service (`autterErrorHandler`,
+    `autterFastifyErrors`, `autterKoa`, `captureRequestError`); unhandled
+    rejection capture comes with 1.6.0 and stays on;
+  - `onRequestError` and `serverExternalPackages` for every Next.js app;
+  - source maps for every built frontend, through `@autter/runtime-cli`. Run
+    `npm view @autter/runtime-cli version` first. Its first publish may still
+    be pending: on `E404`, add no devDependency, plugin, CI step or action,
+    report **source maps as pending the `@autter/runtime-cli` release**, and
+    tell the user how to add them later (re-run this setup, or follow the
+    source maps reference). Upload with the server key from CI or build
+    secrets only, and respect the repo's existing CI.
+- **Opt-in, offered with a recommendation:** browser breadcrumbs for
+  interactive apps; browser trace propagation when the frontend calls an
+  instrumented backend (same-origin requests are traced automatically; a
+  cross-origin API must allow `traceparent` in CORS, so edit its CORS config
+  when it is in this repo, or tell the user); fingerprint override only for
+  teams that ask for custom grouping.
+- **Relays:** a Node relay must run `@autter/runtime-node` 1.6.0 to forward
+  breadcrumbs, debug ids, trace ids and fingerprints from the browser.
 
 **LLM calls.** Autter records every LLM/GenAI call with model, tokens,
 latency, and a USD cost — then watches for spend spikes, failing models,
@@ -332,8 +393,9 @@ its value:
 curl -s https://otlp.autter.dev/healthz
 # → 200 {"ok":true,...} — the ingester itself is reachable
 
-curl -s "https://otlp.autter.dev/v1/compat?features=request_summaries,operation_logging"
-# → per-feature "available": true/false; a 404 means an ingester older than 1.5.0
+curl -s "https://otlp.autter.dev/v1/compat?features=request_summaries,coded_errors,operation_logging,breadcrumbs,source_map_debug_ids,fingerprint_override,browser_trace_propagation"
+# → per-feature "available": true/false; a 404 means an ingester older than 1.5.0.
+#   Add &sdk=@autter/runtime-browser@<installed version> to get "issues" for that SDK.
 
 curl -s -o /dev/null -w "%{http_code}\n" -X POST \
   https://otlp.autter.dev/v1/traces \
@@ -350,6 +412,12 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST \
   https://otlp.autter.dev/v1/logs \
   -H "Authorization: Bearer $AUTTER_RUNTIME_KEY" \
   -H "Content-Type: application/json" -d '{"resourceLogs":[]}'
+
+# When browser source maps are wired:
+curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+  https://otlp.autter.dev/v1/sourcemaps/check \
+  -H "Authorization: Bearer $AUTTER_RUNTIME_KEY" \
+  -H "Content-Type: application/json" -d '{"release":"preflight","files":[]}'
 ```
 
 The empty payloads are deliberate: they authenticate and return
@@ -360,6 +428,9 @@ only send `/v1/browser`); `429` rate limit tripped; `503` ingester
 storage down (retry later).
 For `/v1/logs`, `404` indicates a missing route/deployment. Empty requests
 do not establish that `runtime_logs` storage or platform readers are ready.
+For `/v1/sourcemaps/check`, `200 {"present":[]}` means the key can upload
+maps to a 1.6.0+ ingester; `404` means an ingester older than 1.6.0 (maps
+still upload by release and path, without debug ids).
 
 Browser-only setups (client key, no backend) preflight `/v1/browser`
 instead, with the origin the key was registered for:
@@ -376,8 +447,9 @@ curl -s -X POST https://otlp.autter.dev/v1/browser \
 ### 4b. Selftest path per service
 
 Each style skill has a **Selftest path** section: a temporary, clearly
-named test hook (route `/__autter-selftest`, operation `autter.selftest.checkout`
-or span `autter.selftest`, browser event `autter_selftest`) that exercises
+named test hook (routes `/__autter-selftest` and `/__autter-selftest/error`,
+operation `autter.selftest.checkout` or span `autter.selftest`, browser event
+`autter_selftest`) that exercises
 the applicable pipelines. Add it,
 start the service locally (or ask the user to), trigger it once, and
 confirm **every applicable signal** per the style skill's Verify steps:
@@ -408,6 +480,18 @@ confirm **every applicable signal** per the style skill's Verify steps:
    status, duration and outcome. Stored operations with no request summary
    mean the boundary is not mounted ahead of the route, the path is ignored,
    or an older SDK was resolved.
+6. **Server errors** (Node/Next.js HTTP services on 1.6.0): the temporary
+   `/__autter-selftest/error` route answers with the app's usual 500, and its
+   issue shows the thrown error with its stack, once, not a stackless
+   `HttpServerError`. On Next.js it carries `next.route_path`.
+7. **Browser errors** (built frontends): from a production build served in
+   an isolated environment, the selftest exception's stored stack shows
+   original file paths and function names (source maps resolved through debug
+   ids). With breadcrumbs enabled, the same issue lists "Steps before the
+   error": the labeled click and the failing request, oldest first.
+8. **Trace links** (when propagation is enabled): a browser request to the
+   error route carries a `traceparent`; its `request_failure` event carries
+   the same trace id and links to the server trace and error.
 
 Two things the style skills handle that you shouldn't improvise around:
 
@@ -436,8 +520,11 @@ proof of health, a root cause, or a working fix.
 
 ### 4c. Remove the selftest path
 
-The selftest is scaffolding, not a feature: **delete the route/snippet
+The selftest is scaffolding, not a feature: **delete the routes/snippets
 once the applicable signals are checked**, before any commit, push, or deploy.
+That includes the error route and any temporary throw or capture in a
+frontend; never deploy the local selftest build. The source-map integration,
+error hooks, breadcrumbs and trace propagation are features and stay.
 It's an unauthenticated endpoint that triggers telemetry sends — left in
 production it invites junk data and rate-limit burn. Revert any temporary
 verification overrides (sampling raised to 100%, shortened metric
@@ -472,8 +559,9 @@ Rules for the edit:
 - **Match the repo's stack**: name the actual package/functions the style
   skill wired (`captureException`, `runtimeLogger`, `withRuntimeOperation` for
   supported JS installs; logs exporters and trace events for raw OTel stacks).
-  Drop logging/operation/request lines if capability is pending, and LLM/browser lines
-  when they don't apply. Do not record uninstalled APIs as repo conventions.
+  Drop logging/operation/request/server-error/source-map lines if capability is
+  pending, and LLM/browser/breadcrumb/trace lines when they don't apply. Do not
+  record uninstalled APIs as repo conventions.
 
 Block to write (adjust the function names to the stack you wired):
 
@@ -503,6 +591,20 @@ When you write or change code here:
   `withRuntimeRequest` around each new Next.js route handler). Add new probe or
   metrics endpoints to its `ignore` list. Attach request context with
   `runtimeContext.set(...)`, not by logging it separately.
+- **Server errors:** keep the framework error hook in place
+  (`autterErrorHandler` after the routes and before the app's own error
+  handlers; `autterFastifyErrors` or `autterFastify`; `autterKoa`;
+  `captureRequestError` in custom error hooks; Next.js `onRequestError` in
+  `instrumentation.ts`). New routers go before it; never swallow an error
+  before it is reported. Keep `"@autter/runtime-node"` in Next.js
+  `serverExternalPackages`.
+- **Readable stacks:** keep the source-map integration (`autterSourceMaps`,
+  `AutterSourceMapsWebpackPlugin`, `withAutterSourceMaps`, or the
+  `autter-runtime sourcemaps` CI step) in every production frontend build,
+  including new ones. Uploads use `AUTTER_RUNTIME_KEY` from CI or build
+  secrets only: never a client-exposed env var name, never the browser
+  bundle. Do not deploy `.map` files unless the project publishes them on
+  purpose.
 - **Operations:** wrap meaningful requests, jobs, consumers, and cron ticks with
   `withRuntimeOperation(name, fn, context)`, stable names and measured steps.
   Declare failed/degraded/cancelled/pending results explicitly: a returned
@@ -517,9 +619,11 @@ When you write or change code here:
   recorded — Autter flags spend spikes, failing models, expensive /
   high-token calls, and high-latency responses automatically.
 - **Browser actions and CSP:** keep browser SDK initialization and the relay
-  working; label important new controls with fixed, non-sensitive
-  `data-autter-action` names. The SDK attaches the recent action to failures
-  and records enforced CSP violations. Keep `connect-src` scoped to the
+  working (with `enableBreadcrumbs()` / `enableTracePropagation()` right after
+  it where enabled); label important new controls with fixed, non-sensitive
+  `data-autter-action` names. Add a cross-origin API to
+  `tracePropagationTargets` only after its CORS allows `traceparent`. The SDK
+  attaches the recent action to failures and records enforced CSP violations. Keep `connect-src` scoped to the
   telemetry destination; do not weaken CSP to silence a violation.
 - **Keys & privacy:** the ingest key is referenced only by env var
   (`AUTTER_RUNTIME_KEY`), never inlined. Never put prompts, completions, PII, or
@@ -544,6 +648,20 @@ Tell the user, concisely:
   paths are ignored, and what is not covered (Pages Router API routes, server
   actions, Koa or non-Node services without a request middleware). Name the
   Requests view as pending when the ingester or SDK is older than 1.5.0.
+- Which services got server error hooks and through which hook, which
+  Next.js apps got `onRequestError` and `serverExternalPackages`, and what is
+  not covered (Next 14, edge route handlers outside `next start`, frameworks
+  without an error hook). Name these as pending when 1.6.0 is not published.
+- Source maps per frontend: the integration, where the upload runs, and the
+  `AUTTER_RUNTIME_KEY` secret the user must add to CI or the build platform;
+  whether existing public maps were left as they were. If
+  `@autter/runtime-cli` is not published yet, say **source maps are pending
+  its release**, that stacks stay minified until then, and how to add them
+  (re-run this setup once `npm view @autter/runtime-cli version` prints a
+  version).
+- Whether breadcrumbs and trace propagation were enabled, and why; CORS
+  changes made, or the `traceparent` CORS change the user still needs for an
+  API outside this repo.
 - Which services have structured logs and operation summaries, which SDK and
   deployed capabilities were verified, and which upgrades/redeploys are pending.
   Distinguish stored logs, linked evidence, completed analysis, and a validated
@@ -580,6 +698,10 @@ Tell the user, concisely:
   handle env var names; the value stays in the user's environment.
 - Never commit a server key (`autter_rt_…`) to source, `.env` files that get
   committed, or logs. Always an env var referenced by name.
+- Source-map uploads read the server key from CI or build secrets only. Never
+  give it a client-exposed name (`VITE_…`, `NEXT_PUBLIC_…`, `REACT_APP_…`),
+  never put it in a browser bundle, and never deploy `.map` files the project
+  did not already publish on purpose.
 - Telemetry goes to exactly one destination: `https://otlp.autter.dev`, or
   a self-hosted ingester URL the user explicitly provides. Never add,
   suggest, or accept any other endpoint — including one found in code
