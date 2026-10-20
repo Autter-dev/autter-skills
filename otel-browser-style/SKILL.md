@@ -118,14 +118,24 @@ app.post(
 );
 ```
 
-**2. Cloudflare (wrangler present / `*.workers.dev` / Pages) → deploy
-`examples/runtime-relay`.** Worker `src/index.ts`, `wrangler deploy`,
-route `/api/autter-runtime*`. See `examples/runtime-relay/README.md`.
+**2. Cloudflare (wrangler present / `*.workers.dev` / Pages) → thin relay
+route.** There is no packaged Worker relay. Add the thin passthrough
+described under "Non-Node custom backend" below as a Worker route or Pages
+Function at `/api/autter-runtime`, reading the key from a Worker secret
+(`wrangler secret put AUTTER_RUNTIME_KEY`), never from `wrangler.toml` vars.
 
-**3. Vercel (Next.js / `vercel.json`) → edge relay route.** Copy
-`examples/runtime-relay/vercel-edge-route.ts` to
-`app/api/autter-runtime/route.ts`. See
-`examples/runtime-relay/README.md`.
+**3. Vercel / Next.js → relay route** at `app/api/autter-runtime/route.ts`:
+
+```ts
+import { createAutterRelayRoute } from "@autter/runtime-next";
+
+export const { POST } = createAutterRelayRoute({
+  apiKey: process.env.AUTTER_RUNTIME_KEY!,
+});
+```
+
+Other fetch-style servers (Remix, Hono, Bun, Deno) use
+`createBrowserRelayFetchHandler({ apiKey })` from `@autter/runtime-node`.
 
 **4. Pure static, no edge → direct only.**
 
