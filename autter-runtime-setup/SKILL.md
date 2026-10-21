@@ -2,7 +2,7 @@
 name: autter-runtime-setup
 description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, error stacks, source maps, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
 metadata:
-  version: "1.8.0"
+  version: "1.9.0"
   author: autter
   tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 ---
@@ -150,7 +150,7 @@ style skill **before editing anything**:
 | Next.js (any router) | `otel-node-style` (has a dedicated Next.js section) |
 | Cloudflare Workers, Vercel Edge, Deno, Bun | `otel-node-style` (Edge runtimes section, `@autter/runtime-edge`) |
 | Browser: React/Vue/Svelte/Angular/vanilla SPA, static site | `otel-browser-style` (plus its source maps reference when there is a build step) |
-| Python: FastAPI, Flask, Django, plain WSGI/ASGI | `otel-python-style` |
+| Python: Django, FastAPI, Flask, Celery workers, plain WSGI/ASGI | `otel-python-style` |
 | Go or Rust (any framework) | `otel-go-rust-style` |
 | Anything else (Java, .NET, PHP, Ruby, Elixir, …) | `otel-generic-style` |
 
@@ -159,7 +159,7 @@ action-label, and CSP checks in `otel-browser-style`; server tracing alone
 does not capture browser violations. Apply the browser skill to every
 frontend found in the inventory, including a frontend paired with a backend.
 
-Two 1.6.0 routing rules:
+Routing rules:
 
 - **Every browser service that ships built JavaScript** (Vite, webpack,
   Rollup, Next.js, CRA-style, anything minified) goes through
@@ -171,6 +171,12 @@ Two 1.6.0 routing rules:
   ["@autter/runtime-node"]` in `next.config` and `onRequestError` from
   `@autter/runtime-next/instrumentation` in `instrumentation.ts`. Its client
   build also gets `withAutterSourceMaps`.
+- **Every Python service** (web app or Celery worker) starts tracing with
+  `init_tracing()` from Runtime's copied `adapters/python/autter_tracing.py`,
+  as `otel-python-style` describes: with a plain ratio sampler, OTel Python
+  exports no error from the traces it drops. Under `opentelemetry-instrument`
+  that takes full sampling (`parentbased_always_on`), which needs the user's
+  agreement.
 
 The style skills above are the ones bundled in this same skill set
 (github.com/Autter-dev/autter-skills) — never substitute a third-party
@@ -508,10 +514,12 @@ confirm **every applicable signal** per the style skill's Verify steps:
    status, duration and outcome. Stored operations with no request summary
    mean the boundary is not mounted ahead of the route, the path is ignored,
    or an older SDK was resolved.
-6. **Server errors** (Node/Next.js HTTP services on 1.6.0): the temporary
-   `/__autter-selftest/error` route answers with the app's usual 500, and its
-   issue shows the thrown error with its stack, once, not a stackless
-   `HttpServerError`. On Next.js it carries `next.route_path`.
+6. **Server errors** (Node/Next.js HTTP services on 1.6.0, Python HTTP
+   services): the temporary `/__autter-selftest/error` route answers with the
+   app's usual 500, and its issue shows the thrown error with its stack, once,
+   not a stackless `HttpServerError`. On Next.js it carries
+   `next.route_path`; on Python its in-app frame is the selftest function, and
+   it arrives at the production sampling ratio.
 7. **Browser errors** (built frontends): `autter-runtime sourcemaps verify`
    passes on the production build (`upload.status` `verified`; locally
    without a key, `unverified` as the source maps reference's step 4
@@ -533,9 +541,10 @@ Two things the style skills handle that you shouldn't improvise around:
   go through the real HTTP metrics instrument.
 - Regular traces are 1% head-sampled in most stacks, so a single test
   request usually exports nothing. Each style skill says how to make the
-  selftest deterministic (always-on pipes in the Node packages, a
-  temporary 100% sampling override elsewhere, force-flush instead of
-  waiting out the 60s metric interval).
+  selftest deterministic (always-on pipes in the Node packages, the
+  always-on error spans of `autter_tracing.py` for Python errors, a
+  temporary 100% sampling override for other signals and stacks,
+  force-flush instead of waiting out the 60s metric interval).
 
 If a stack's metrics pipe isn't wired (some raw-OTel setups configure
 only a tracer), the style skill shows how to add the meter provider —
@@ -590,7 +599,10 @@ Rules for the edit:
   parallel files; one is enough, and never touch files outside the project.
 - **Match the repo's stack**: name the actual package/functions the style
   skill wired (`captureException`, `runtimeLogger`, `withRuntimeOperation` for
-  supported JS installs; logs exporters and trace events for raw OTel stacks).
+  supported JS installs; logs exporters and trace events for raw OTel stacks;
+  for Python, `init_tracing()` from `autter_tracing.py`, Django's
+  `ClientErrorResponses`, and `trace.get_current_span().record_exception(exc,
+  attributes={"autter.handled": True})` for handled exceptions).
   Drop logging/operation/request/server-error/source-map lines if capability is
   pending, and LLM/browser/breadcrumb/trace lines when they don't apply. Do not
   record uninstalled APIs as repo conventions.
@@ -687,6 +699,13 @@ Tell the user, concisely:
   Next.js apps got `onRequestError` and `serverExternalPackages`, and what is
   not covered (Next 14, edge route handlers outside `next start`, frameworks
   without an error hook). Name these as pending when 1.6.0 is not published.
+- Which Python services start tracing with `init_tracing()` (errors kept at
+  any sampling ratio) and which run `opentelemetry-instrument` at full
+  sampling instead; Django services with `ClientErrorResponses`; Python
+  error handlers that answer exceptions and now record them. Self-hosted
+  ingesters at 1.7.0 or older group Python exception groups by message and
+  count standard library frames as in-app; the hosted ingester already has
+  the fix.
 - Source maps per frontend: the integration `sourcemaps setup` added and
   any `manual` actions left; where the upload runs; the key, by display
   prefix only (an upload key such as `autter_rtu_ab12…` and the CI secret it
@@ -768,5 +787,7 @@ Tell the user, concisely:
   error listener).
 - Don't push, deploy, or open a PR without the user's explicit go-ahead.
 - Default trace sampling is 1% (errors are always captured at 100% — never
-  sampled out). Don't raise the sample rate without the user asking; high
-  sampling on a busy service generates real cost.
+  sampled out; in Python only through `autter_tracing.py`'s `init_tracing()`
+  or an explicit `RecordUnsampled`/`RetainErrorTraces` wiring). Don't raise
+  the sample rate without the user asking; high sampling on a busy service
+  generates real cost.
