@@ -34,9 +34,9 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 | Skill | Covers |
 | --- | --- |
 | [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, repository wiki Markdown, accepted process learnings and team rules, and indexed code/architecture/run commands through Autter MCP. Uses source commits and freshness metadata to ground coding work in how the user works and how the platform is built. |
-| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, checks installed and deployed capabilities, configures the chosen ingestion path, routes built frontends to source-map upload and Next.js apps to server error capture, verifies stored traces/errors with readable stacks, breadcrumbs and trace links, metrics, logs/operations and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
+| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, checks installed and deployed capabilities (through `get_runtime_setup` when Autter MCP is connected), configures the chosen ingestion path, routes built frontends to source-map upload and Next.js apps to server error capture, verifies stored traces/errors with readable stacks, breadcrumbs and trace links, metrics, logs/operations and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS), Next.js and edge runtimes (Workers, Vercel Edge, Deno, Bun), via `@autter/runtime-node` / `@autter/runtime-next` / `@autter/runtime-edge`, including per-request summaries, server error hooks that keep stacks, and Next.js server errors through `onRequestError`. |
-| [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including source-map upload with `@autter/runtime-cli`, breadcrumbs, links from browser errors to server traces, CSP violations and privacy-conscious recent action context. |
+| [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including source-map upload in four steps (check, `autter-runtime sourcemaps setup`, an upload-only key stored straight into CI, `sourcemaps verify`), breadcrumbs, links from browser errors to server traces, CSP violations and privacy-conscious recent action context. |
 | [`otel-python-style`](./otel-python-style/) | FastAPI, Flask, Django, plain WSGI/ASGI, via the standard OpenTelemetry Python SDK. |
 | [`otel-go-rust-style`](./otel-go-rust-style/) | Go and Rust backends, via each language's official OTel SDK. |
 | [`otel-generic-style`](./otel-generic-style/) | Everything else — Java, .NET, PHP, Ruby, Elixir, Kotlin, … — via standard OTLP/HTTP + OTel env vars. |
@@ -58,12 +58,13 @@ skill continues with exposed learnings/index tools and local source code.
 
 ## Why Runtime works for any language
 
-Autter Runtime's ingester uses two key types and these HTTP endpoints:
+Autter Runtime's ingester uses these key types and HTTP endpoints:
 
 | Credential | Lives in | Can |
 | --- | --- | --- |
 | Server key `autter_rt_…` | backend env vars | send OTLP traces/metrics/logs, relay browser events |
 | Client key `autter_rtc_…` | frontend bundles (publishable) | send browser events only, origin-restricted |
+| Upload key `autter_rtu_…` | CI secrets | upload and check source maps only (ingester 1.7.0+) |
 
 | Endpoint | Format |
 | --- | --- |
@@ -71,8 +72,8 @@ Autter Runtime's ingester uses two key types and these HTTP endpoints:
 | `POST /v1/logs` | OTLP/HTTP logs — protobuf or JSON; requires the operation-logging ingester release |
 | `POST /v1/browser` | compact JSON (`@autter/runtime-browser` payload) |
 | `POST /v1/profiles` | symbolized pprof (server key only) |
-| `POST /v1/sourcemaps` | release-keyed source map JSON with an optional debug id (server key only) |
-| `POST /v1/sourcemaps/check` | which maps are already stored, so uploads skip them (server key only, 1.6.0+) |
+| `POST /v1/sourcemaps` | release-keyed source map JSON with an optional debug id (upload or server key) |
+| `POST /v1/sourcemaps/check` | which maps are already stored, so uploads skip them (upload or server key, 1.6.0+) |
 | `GET /v1/compat` | ingester version and supported features (public) |
 | `POST /v1/platform-events` | ECS/Kubernetes OOM and restart JSON (server key only) |
 
@@ -100,6 +101,10 @@ ingest keys → Create key**. Pick the repository, then choose:
   commit it.
 - **Client** — publishable, for browser-only apps with no backend. Scoped
   to the exact origins you register it for.
+
+For source map uploads in CI, create an upload-only key in the repository's
+**Settings → Runtime → Source map upload key**, or let the agent create one
+through Autter MCP.
 
 Set the key in your own environment (shell profile, gitignored `.env`, or
 secret manager) as `AUTTER_RUNTIME_KEY` — **don't paste key values into
@@ -160,11 +165,16 @@ by default where it applies:
   plugin, `withAutterSourceMaps` for Next.js, or the `autter-runtime
   sourcemaps inject` / `upload` commands and the `upload-sourcemaps` GitHub
   Action for anything else. Maps stay hidden, carry debug ids, and upload
-  with the server key from CI or build secrets, never from the browser
-  bundle. Without them, browser stacks point at minified chunks that RCA and
-  fix agents cannot use. The skills first check that the CLI is published
-  (`npm view @autter/runtime-cli version`); until it is, they wire nothing
-  and report source maps as pending its release.
+  from CI or build secrets, never from the browser bundle. Without them,
+  browser stacks point at minified chunks that RCA and fix agents cannot
+  use. The agent does it in four steps: check (`get_runtime_setup` over
+  Autter MCP, or `/v1/compat`, and `npm view @autter/runtime-cli version`),
+  `autter-runtime sourcemaps setup`, an upload-only key (`autter_rtu_…`)
+  from `create_sourcemap_upload_key` piped straight into the CI secret (or
+  one the user creates) and named by prefix only, then `autter-runtime sourcemaps verify` on a
+  production build. With a CLI older than 1.2.0 they wire it by hand; until
+  the CLI is published, they wire nothing and report source maps as pending
+  its release.
 - **Server errors.** `autterErrorHandler()` (Express/Connect),
   `autterFastifyErrors`, `autterKoa()` and `captureRequestError` record a
   thrown error with its stack instead of a stackless 500, without changing
@@ -179,10 +189,11 @@ by default where it applies:
   browser error to the server trace of the same request; cross-origin APIs
   must allow the `traceparent` header in CORS.
 
-This needs SDK **1.6.0** (`runtime-edge` 1.1.0, `runtime-cli` 1.0.0) and
-ingester **1.6.0**, checked through `/v1/compat` (`breadcrumbs`,
+This needs SDK **1.6.0** (`runtime-edge` 1.1.0, `runtime-cli` 1.2.0 for
+`setup` and `verify`) and ingester **1.6.0** (1.7.0 for upload keys and
+`verify`'s ingester check), checked through `/v1/compat` (`breadcrumbs`,
 `source_map_debug_ids`, `fingerprint_override`,
-`browser_trace_propagation`). See
+`browser_trace_propagation`, `sourcemap_upload_keys`, `source_map_verify`). See
 [source maps setup](otel-browser-style/references/source-maps.md) and
 [server errors setup](otel-node-style/references/server-errors.md).
 

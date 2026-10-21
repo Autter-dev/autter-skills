@@ -2,7 +2,7 @@
 name: otel-browser-style
 description: Wire Autter Runtime into browser apps, including source map upload for readable stacks, breadcrumbs, links from browser errors to server traces, CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   tags: [autter, telemetry, browser, react, spa, error-tracking, sourcemaps, breadcrumbs, tracing]
   author: autter
 ---
@@ -20,9 +20,11 @@ Read [Source maps setup](references/source-maps.md) for every service that
 ships built JavaScript (Vite, webpack, Rollup, Next.js, CRA-style, anything
 minified). Uploading maps with `@autter/runtime-cli` is a default setup step:
 without them, stacks point at minified chunks that root cause analysis and
-fix agents cannot use. Check first that the CLI is published (`npm view
-@autter/runtime-cli version`); if it is not, wire nothing and report source
-maps as pending its release.
+fix agents cannot use. It takes four steps: check (`get_runtime_setup` over
+Autter MCP, or `/v1/compat`, plus `npm view @autter/runtime-cli version`),
+`sourcemaps setup`, an upload-only key in CI, and `sourcemaps verify`. If the
+CLI is not published, wire nothing and report source maps as pending its
+release.
 
 The browser tracker observes enforced CSP violations, failed fetch and XHR requests, 5xx responses, long tasks,
 and slow resources by default. Use `captureOutcome(stableName, message)` for
@@ -196,26 +198,42 @@ manually anywhere you catch something yourself.
 
 ## Source maps (default for built apps)
 
-Follow [Source maps setup](references/source-maps.md). In short: install
-`@autter/runtime-cli` as a dev dependency and add the integration that fits
-the build:
+Follow [Source maps setup](references/source-maps.md), in four steps per
+frontend:
+
+1. **Check:** `get_runtime_setup` when Autter MCP is connected (ingester
+   features, key kinds by prefix, recent uploads), else
+   `/v1/compat?features=source_map_debug_ids,sourcemap_upload_keys,source_map_verify`;
+   and `npm view @autter/runtime-cli version` (1.2.0+ for steps 2 and 4,
+   else the reference's manual setup).
+2. **Set up:** `npx @autter/runtime-cli@^1.2.0 sourcemaps setup --json` in
+   the app's directory. Review its diff and carry out every `manual` action.
+3. **Key:** an upload-only key (`autter_rtu_…`) as `AUTTER_RUNTIME_KEY`
+   where the production build runs, created with `create_sourcemap_upload_key`
+   and stored straight into the CI secret on stdin, or created by the user on
+   the Runtime settings page. Name it by prefix only; never write it to a file.
+4. **Verify:** `npx autter-runtime sourcemaps verify <outputDir> --json`
+   after a production build; in CI after the build step.
+
+Setup adds the integration that fits the build (the action is the manual
+alternative in GitHub Actions):
 
 | Build | Integration |
 | --- | --- |
 | Vite or Rollup | `autterSourceMaps()` from `@autter/runtime-cli/vite` |
 | webpack 5 | `new AutterSourceMapsWebpackPlugin()` from `@autter/runtime-cli/webpack` |
 | Next.js | `withAutterSourceMaps(nextConfig)` from `@autter/runtime-cli/next` |
-| Anything else, or a CI step | `autter-runtime sourcemaps inject <dir>` then `upload <dir>` |
+| CRA, Angular CLI, Parcel, esbuild | a `postbuild` step: `autter-runtime sourcemaps inject <dir>`, then `upload <dir> --delete-after-upload --best-effort` |
 | GitHub Actions without a plugin | `Autter-dev/autter-runtime/.github/actions/upload-sourcemaps` |
 
-When the integration turns maps on, they stay hidden (bundles do not
-reference them) and are deleted after upload; a project that already emits
-maps needs the decision in the reference. Every bundle with a map gets a
-debug id, so the 1.6.0 browser SDK matches the exact build even when
-`release` differs. Uploads use the **server** key from
-`AUTTER_RUNTIME_KEY` in the CI or build environment only, never in the
-client bundle. Wire the upload into the repo's existing build and deploy
-pipeline.
+Maps an integration turns on stay hidden (bundles do not reference them) and
+are deleted after the upload whatever its outcome; without a key it turns
+none on and the build is unchanged. A project that already emits maps needs
+the decision in the reference. Every bundle with a map gets a debug id, so the
+1.6.0 browser SDK matches the exact build even when `release` differs. The
+key lives in the CI or build environment only, never in the client bundle or
+under a client-exposed env name. Wire the upload into the repo's existing
+build and deploy pipeline.
 
 ## Breadcrumbs: the steps before an error (opt-in, 1.6.0)
 
@@ -411,11 +429,13 @@ records a `request_failure` with a trace id.
 6. Ground truth in the dashboard (~1–2 min): one info-severity
    "autter selftest" issue and a usage counter `event:autter_selftest` —
    both clearly named; the user can resolve or ignore them.
-7. Source maps (built apps): the selftest exception's payload carries
-   `debugIds`, and its issue shows original file paths and function names
-   instead of minified chunk names. Follow the Verify list in the
-   [source maps reference](references/source-maps.md), including that no
-   `.map` files are deployed.
+7. Source maps (built apps): `autter-runtime sourcemaps verify` passes on
+   the production build (debug ids in every bundle, no `.map` files left,
+   maps on the ingester); a local build without a key follows step 4 of the
+   reference, and CI verifies the upload. The selftest
+   exception's payload carries `debugIds`, and its issue shows original file
+   paths and function names instead of minified chunk names. See step 4 of
+   the [source maps reference](references/source-maps.md).
 8. Breadcrumbs (when enabled): the exception event in the POST body has a
    `breadcrumbs` array, and the issue page lists "Steps before the error"
    with the labeled click and the failing request, oldest first. Request

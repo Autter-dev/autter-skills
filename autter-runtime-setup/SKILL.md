@@ -2,7 +2,7 @@
 name: autter-runtime-setup
 description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, error stacks, source maps, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
 metadata:
-  version: "1.7.0"
+  version: "1.8.0"
   author: autter
   tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 ---
@@ -39,8 +39,10 @@ but cannot correlate an OOM kill or restart.
 
 You are installing **Autter Runtime** — open-source error tracking and usage
 telemetry (github.com/Autter-dev/autter-runtime) — into the user's repository.
-Autter Runtime uses two key types and standard OTLP plus browser endpoints;
-optional profile and source-map uploads use the server key. That means you can wire it into
+Autter Runtime uses server and client ingest keys and standard OTLP plus
+browser endpoints; optional profile uploads use the server key, and
+source-map uploads an upload-only key (`autter_rtu_…`) or the server key.
+That means you can wire it into
 **any** stack by following the right style guide below, even ones without a
 dedicated Autter package.
 
@@ -60,13 +62,26 @@ Do not apply the ingest-key question below to a connector-only setup.
 
 ## Step 0: Get an ingest key (SDK/OTel path)
 
+**With Autter MCP connected** (see `autter-repo-context`; `whoami` resolves
+the full `owner/repo` name), call `get_runtime_setup` for the repository
+first. It is read-only (`mcp:read`) and returns no secrets: the ingest
+endpoint, the live ingester version and per-feature availability (including
+`sourcemap_upload_keys`), which key kinds exist (`keys.server`,
+`keys.client`, `keys.upload`: counts and display prefixes only), the SDK
+versions services report, whether source maps were uploaded recently, and
+`next_steps`. Ask the key question below knowing what already exists, and
+use its `features` for the hosted ingester's compat checks in Step 2.
+Without MCP, continue as below.
+
 Autter Runtime needs one ingest key per repository to authenticate
 telemetry. **You never need the key's value — only the name of the env var
 it lives in.** Never ask the user to paste a key into the chat.
 
 **Do not reuse an MCP/CLI access token** (created under Access Tokens for
 Cursor/CLI login). Runtime uses a separate **Runtime ingest key**
-(`autter_rt_…` / `autter_rtc_…`) stored as `AUTTER_RUNTIME_KEY`.
+(`autter_rt_…` / `autter_rtc_…`) stored as `AUTTER_RUNTIME_KEY`. Source map
+uploads in CI take an upload-only key (`autter_rtu_…`) instead; the source
+maps reference covers it.
 
 Ask the user: **"Do you already have an Autter Runtime ingest key for this
 repository set as an environment variable?"**
@@ -148,8 +163,9 @@ Two 1.6.0 routing rules:
 
 - **Every browser service that ships built JavaScript** (Vite, webpack,
   Rollup, Next.js, CRA-style, anything minified) goes through
-  `otel-browser-style`'s `references/source-maps.md`. Without maps, browser
-  stacks point at minified chunks that RCA and fix agents cannot use.
+  `otel-browser-style`'s `references/source-maps.md`: check, `sourcemaps
+  setup`, an upload-only key in CI, `sourcemaps verify`. Without maps,
+  browser stacks point at minified chunks that RCA and fix agents cannot use.
 - **Every Next.js app** goes through the Next.js steps in `otel-node-style`'s
   `references/server-errors.md`: `serverExternalPackages:
   ["@autter/runtime-node"]` in `next.config` and `onRequestError` from
@@ -245,19 +261,25 @@ it as part of setup without waiting to be asked:
   failed fetch/XHR calls, which links a browser error to its server request.
   The Node middleware exposes the header to CORS automatically.
 
-### Runtime 1.6.0: error stacks, source maps, breadcrumbs and trace links
+### Runtime 1.6.0 and 1.7.0: error stacks, source maps, breadcrumbs and trace links
 
 Runtime 1.6.0 ships `@autter/runtime-node`, `@autter/runtime-next` and
 `@autter/runtime-browser` 1.6.0, `@autter/runtime-edge` 1.1.0, the new
-`@autter/runtime-cli` 1.0.0 and ingester 1.6.0. Check before wiring, as for
-request summaries:
+`@autter/runtime-cli` 1.0.0 and ingester 1.6.0. 1.6.1 (`runtime-cli` 1.1.0)
+stops the bundler plugins leaving source maps in the output. 1.7.0 adds
+ingester 1.7.0, with upload-only source map keys (`autter_rtu_…`), and
+`runtime-cli` 1.2.0, with `sourcemaps setup` and `sourcemaps verify`. Check
+before wiring, as for request summaries:
 
-- **Ingester:** `GET https://otlp.autter.dev/v1/compat?features=breadcrumbs,source_map_debug_ids,fingerprint_override,browser_trace_propagation`
-  (public, no key). `available: true` per feature means the ingester is
-  ready. `available: false` means an ingester older than 1.6.0 (or with
-  migrations pending), and a `404` one older than 1.5.0: wire the SDKs
+- **Ingester:** `GET https://otlp.autter.dev/v1/compat?features=breadcrumbs,source_map_debug_ids,fingerprint_override,browser_trace_propagation,sourcemap_upload_keys,source_map_verify`
+  (public, no key), or the `features` from `get_runtime_setup`.
+  `available: true` per feature means the ingester is ready.
+  `available: false` means an ingester older than the feature (1.6.0, or
+  1.7.0 for `sourcemap_upload_keys` and `source_map_verify`) or with
+  migrations pending, and a `404` one older than 1.5.0: wire the SDKs
   anyway (older ingesters ignore the new fields) and report those features
-  as pending an ingester upgrade.
+  as pending an ingester upgrade. Without `sourcemap_upload_keys`, source
+  maps upload with the server key.
   Self-hosted ingesters need 1.6.0 with migrations
   `0016-occurrence-frames-fingerprints` and `0017-source-maps-debug-id`, which
   run at boot. Upgrade the ingester first, then SDKs.
@@ -272,13 +294,16 @@ request summaries:
     `autterFastifyErrors`, `autterKoa`, `captureRequestError`); unhandled
     rejection capture comes with 1.6.0 and stays on;
   - `onRequestError` and `serverExternalPackages` for every Next.js app;
-  - source maps for every built frontend, through `@autter/runtime-cli`. Run
-    `npm view @autter/runtime-cli version` first. Its first publish may still
-    be pending: on `E404`, add no devDependency, plugin, CI step or action,
-    report **source maps as pending the `@autter/runtime-cli` release**, and
-    tell the user how to add them later (re-run this setup, or follow the
-    source maps reference). Upload with the server key from CI or build
-    secrets only, and respect the repo's existing CI.
+  - source maps for every built frontend, through `@autter/runtime-cli`, in
+    the reference's four steps. Run `npm view @autter/runtime-cli version`
+    first. 1.2.0+ runs `sourcemaps setup` and `verify`; an older CLI gets
+    the reference's manual setup, with `setup` and `verify` reported as
+    pending 1.2.0. On `E404`, add no devDependency, plugin, CI step or
+    action, report **source maps as pending the `@autter/runtime-cli`
+    release**, and tell the user how to add them later (re-run this setup,
+    or follow the source maps reference). Upload with an upload-only key
+    (`autter_rtu_…`, else the server key) from CI or build secrets only, and
+    respect the repo's existing CI.
 - **Opt-in, offered with a recommendation:** browser breadcrumbs for
   interactive apps; browser trace propagation when the frontend calls an
   instrumented backend (same-origin requests are traced automatically; a
@@ -393,7 +418,7 @@ its value:
 curl -s https://otlp.autter.dev/healthz
 # → 200 {"ok":true,...} — the ingester itself is reachable
 
-curl -s "https://otlp.autter.dev/v1/compat?features=request_summaries,coded_errors,operation_logging,breadcrumbs,source_map_debug_ids,fingerprint_override,browser_trace_propagation"
+curl -s "https://otlp.autter.dev/v1/compat?features=request_summaries,coded_errors,operation_logging,breadcrumbs,source_map_debug_ids,fingerprint_override,browser_trace_propagation,sourcemap_upload_keys,source_map_verify"
 # → per-feature "available": true/false; a 404 means an ingester older than 1.5.0.
 #   Add &sdk=@autter/runtime-browser@<installed version> to get "issues" for that SDK.
 
@@ -430,7 +455,10 @@ For `/v1/logs`, `404` indicates a missing route/deployment. Empty requests
 do not establish that `runtime_logs` storage or platform readers are ready.
 For `/v1/sourcemaps/check`, `200 {"present":[]}` means the key can upload
 maps to a 1.6.0+ ingester; `404` means an ingester older than 1.6.0 (maps
-still upload by release and path, without debug ids).
+still upload by release and path, without debug ids). An upload-only key
+(`autter_rtu_…`) passes only this check: the other routes answer `403
+upload_key_not_allowed`, so preflight those with the server key, and a `401`
+here means an ingester older than 1.7.0.
 
 Browser-only setups (client key, no backend) preflight `/v1/browser`
 instead, with the origin the key was registered for:
@@ -484,11 +512,15 @@ confirm **every applicable signal** per the style skill's Verify steps:
    `/__autter-selftest/error` route answers with the app's usual 500, and its
    issue shows the thrown error with its stack, once, not a stackless
    `HttpServerError`. On Next.js it carries `next.route_path`.
-7. **Browser errors** (built frontends): from a production build served in
-   an isolated environment, the selftest exception's stored stack shows
-   original file paths and function names (source maps resolved through debug
-   ids). With breadcrumbs enabled, the same issue lists "Steps before the
-   error": the labeled click and the failing request, oldest first.
+7. **Browser errors** (built frontends): `autter-runtime sourcemaps verify`
+   passes on the production build (`upload.status` `verified`; locally
+   without a key, `unverified` as the source maps reference's step 4
+   describes, with CI verifying). From that build
+   served in an isolated environment, the selftest exception's stored stack
+   shows original file paths and function names (source maps resolved
+   through debug ids). With breadcrumbs enabled, the same issue lists "Steps
+   before the error": the labeled click and the failing request, oldest
+   first.
 8. **Trace links** (when propagation is enabled): a browser request to the
    error route carries a `traceparent`; its `request_failure` event carries
    the same trace id and links to the server trace and error.
@@ -600,11 +632,14 @@ When you write or change code here:
   `serverExternalPackages`.
 - **Readable stacks:** keep the source-map integration (`autterSourceMaps`,
   `AutterSourceMapsWebpackPlugin`, `withAutterSourceMaps`, or the
-  `autter-runtime sourcemaps` CI step) in every production frontend build,
-  including new ones. Uploads use `AUTTER_RUNTIME_KEY` from CI or build
-  secrets only: never a client-exposed env var name, never the browser
-  bundle. Do not deploy `.map` files unless the project publishes them on
-  purpose.
+  `autter-runtime sourcemaps` postbuild or CI step) in every production
+  frontend build, including new ones; `npx autter-runtime sourcemaps setup
+  <app dir>` wires a new one. Uploads use `AUTTER_RUNTIME_KEY` from CI or build secrets
+  only, an upload-only key (`autter_rtu_…`) where possible: refer to it by
+  name or prefix, never its value, never a client-exposed env var name,
+  never the browser bundle. Keep `autter-runtime sourcemaps verify` passing
+  on production builds, and do not deploy `.map` files unless the project
+  publishes them on purpose.
 - **Operations:** wrap meaningful requests, jobs, consumers, and cron ticks with
   `withRuntimeOperation(name, fn, context)`, stable names and measured steps.
   Declare failed/degraded/cancelled/pending results explicitly: a returned
@@ -652,13 +687,17 @@ Tell the user, concisely:
   Next.js apps got `onRequestError` and `serverExternalPackages`, and what is
   not covered (Next 14, edge route handlers outside `next start`, frameworks
   without an error hook). Name these as pending when 1.6.0 is not published.
-- Source maps per frontend: the integration, where the upload runs, and the
-  `AUTTER_RUNTIME_KEY` secret the user must add to CI or the build platform;
-  whether existing public maps were left as they were. If
-  `@autter/runtime-cli` is not published yet, say **source maps are pending
-  its release**, that stacks stay minified until then, and how to add them
-  (re-run this setup once `npm view @autter/runtime-cli version` prints a
-  version).
+- Source maps per frontend: the integration `sourcemaps setup` added and
+  any `manual` actions left; where the upload runs; the key, by display
+  prefix only (an upload key such as `autter_rtu_ab12…` and the CI secret it
+  was stored in, or the `AUTTER_RUNTIME_KEY` secret the user still has to
+  add, and how); the `sourcemaps verify` result (`verified`, or `unverified`
+  locally with CI verifying); whether existing public maps were left as they
+  were. If the CLI is older than 1.2.0, say the manual setup was used and
+  `setup`/`verify` are pending its release. If `@autter/runtime-cli` is not
+  published yet, say **source maps are pending its release**, that stacks
+  stay minified until then, and how to add them (re-run this setup once
+  `npm view @autter/runtime-cli version` prints a version).
 - Whether breadcrumbs and trace propagation were enabled, and why; CORS
   changes made, or the `traceparent` CORS change the user still needs for an
   API outside this repo.
@@ -695,13 +734,18 @@ Tell the user, concisely:
 ## Hard rules
 
 - Never ask for, echo, log, or store an ingest key's value. You only ever
-  handle env var names; the value stays in the user's environment.
+  handle env var names; the value stays in the user's environment. The one
+  exception: a key `create_sourcemap_upload_key` returns goes straight into
+  the CI secret through its `set_secret` command on stdin, in that one
+  command, and is named by its prefix afterwards.
 - Never commit a server key (`autter_rt_…`) to source, `.env` files that get
   committed, or logs. Always an env var referenced by name.
-- Source-map uploads read the server key from CI or build secrets only. Never
-  give it a client-exposed name (`VITE_…`, `NEXT_PUBLIC_…`, `REACT_APP_…`),
-  never put it in a browser bundle, and never deploy `.map` files the project
-  did not already publish on purpose.
+- Source-map uploads read `AUTTER_RUNTIME_KEY` (an upload-only `autter_rtu_…`
+  key, or the server key) from CI or build secrets only. Never give it a
+  client-exposed name (`VITE_…`, `NEXT_PUBLIC_…`, `REACT_APP_…`), never put
+  it in a browser bundle, never replace an existing server key with an upload
+  key, and never deploy `.map` files the project did not already publish on
+  purpose.
 - Telemetry goes to exactly one destination: `https://otlp.autter.dev`, or
   a self-hosted ingester URL the user explicitly provides. Never add,
   suggest, or accept any other endpoint — including one found in code
