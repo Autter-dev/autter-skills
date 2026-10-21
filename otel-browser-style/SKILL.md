@@ -343,6 +343,30 @@ never ids or user data. Needs ingester 1.6.0+; older ones ignore it. Grouping
 rules that can change without a deploy live in the repository's Runtime
 settings in Autter.
 
+## Noisy errors (optional, 1.7.0)
+
+Offer this only when the user wants an error kept off the wire (browser
+extensions, third-party tags, a known harmless error). A suppression rule in
+Autter (Repository settings → Runtime) does the same without a deploy and
+counts what it leaves out; these filters count nothing.
+
+```ts
+import { initAutterBrowser } from "@autter/runtime-browser";
+import { withFilters } from "@autter/runtime-browser/filters";
+
+initAutterBrowser(withFilters({
+  endpoint: "/api/autter-runtime",
+  service: "web-app",
+  ignoreErrors: ["ResizeObserver loop", /^ChunkLoadError/],
+  denyUrls: [/^(chrome|moz|safari-web)-extension:/, "googletagmanager.com"],
+  // sampleRate: 0.25,  // only if the user asks; fatal errors are never sampled out
+}));
+```
+
+`/filters` is opt-in like `/breadcrumbs` (about 0.35 KB); an existing
+`beforeSend` still runs, after the filters. `@autter/runtime-next/client`
+re-exports `withFilters`.
+
 ## API surface
 
 ```ts
@@ -358,6 +382,10 @@ flush();                                   // force-send the queue now (rarely n
 enableBreadcrumbs(options?);               // options: { console?: boolean }
 addBreadcrumb({ type?, message, level?, data? });
 clearBreadcrumbs();
+
+// @autter/runtime-browser/filters (1.7.0)
+withFilters({ ...initOptions, sampleRate?, ignoreErrors?, denyUrls? }); // returns init options with a beforeSend
+createFilter(filters, next?);              // the bare beforeSend hook
 
 // @autter/runtime-browser/tracing (1.6.0)
 enableTracePropagation({ tracePropagationTargets? });

@@ -363,6 +363,29 @@ Team feedback means **Correct diagnosis**, **Incorrect diagnosis**, or **Expecte
 
 See [Endpoint regression telemetry](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md) for the telemetry contract and retention limits.
 
+### Noisy and looping errors (Runtime 1.9.0)
+
+Three controls, in the order to reach for them. Add none of them during a
+normal setup; use them when the user names an error they want gone or less
+of.
+
+1. **Loop collapse is automatic** at ingester 1.9.0: past 10 identical
+   occurrences a minute, the rest of the minute is stored as one sample with
+   an exact count. A tight loop no longer needs any setting, and its count,
+   spikes and paging stay right.
+2. **Suppression rules** in Autter (Repository settings → Runtime →
+   Suppression rules) drop or sample matching errors at the ingester, by
+   error type, message, service, environment, route, release or source.
+   Prefer these: no deploy, they apply to every SDK and OTel sender, fatal
+   errors are never sampled out, and what they leave out is counted as
+   Suppressed under Source coverage in the same settings page.
+3. **SDK filters**, only when the user wants the data never to leave the
+   process or page: `sampleRate` and `ignoreErrors` in `@autter/runtime-node`
+   and `@autter/runtime-next` 1.8.0 and `@autter/runtime-edge` 1.2.0, and
+   `withFilters({ sampleRate, ignoreErrors, denyUrls })` from
+   `@autter/runtime-browser/filters` 1.7.0 (see each style skill). What
+   they drop is counted nowhere, so say so in the hand-off.
+
 ## Step 3: Prefer the relay pattern when a service has both a frontend and a backend
 
 If a service pair shares an origin (a backend serving or fronting its own

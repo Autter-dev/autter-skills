@@ -516,6 +516,15 @@ behavior; see the [server errors reference](references/server-errors.md).
   `0.01`). Captured exceptions bypass sampling entirely — always sent.
   Raising this on a high-traffic service multiplies telemetry volume/cost;
   only change it if the user explicitly asks.
+- Error filters (1.8.0): `sampleRate` (0..1, default `1`) and
+  `ignoreErrors` (strings matched against the error type or message,
+  RegExps against the type, the message and `"<type>: <message>"`) on
+  `initAutterServer`, `initAutterLogging` and `registerAutter`. Off by
+  default; add them only when the user asks to drop a named error. Crashes,
+  unhandled rejections and fatal messages are never sampled out. What they
+  drop is counted nowhere: suggest a suppression rule in Autter first
+  (Repository settings → Runtime), which needs no deploy and is counted.
+  Edge: the same two options on `withAutter` (`@autter/runtime-edge` 1.2.0).
 - LLM tracing: on by default (`llmTracing`) — GenAI spans bypass the 1%
   sampling and are always sent. Leave it on unless the user asks.
 - Metrics export every 60s (`metricIntervalMs`).
