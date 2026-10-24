@@ -225,8 +225,7 @@ def init_observability():
 
 It needs `opentelemetry-exporter-otlp-proto-http` and an `autter_tracing.py`
 copied after 2026-10-24: an older copy rejects `count_requests`, so copy it
-again. Self-hosted ingesters need the first release after 1.9.0 (the hosted
-ingester counts it already). The framework instrumentations' own HTTP
+again. It works with ingester 1.8.0 and later, hosted or self-hosted. The framework instrumentations' own HTTP
 duration histograms are dropped so no request is counted twice. gRPC server
 spans keep their span-fed counts.
 

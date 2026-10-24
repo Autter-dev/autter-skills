@@ -523,9 +523,10 @@ AUTTER_RUNTIME_KEY`, or the platform's secret store), never a client key and
 never a value in `wrangler.toml`. Do not install `@autter/runtime-node` in an
 edge bundle.
 
-From the first `@autter/runtime-edge` release after 1.2.0, each request is also
-counted from its summary (request counts, failed-request share, release
-health); 1.2.0 sends error counts only. Next.js `middleware.ts` should report
+With `@autter/runtime-edge` 1.3.0+, each request is also counted from its
+summary (request counts, failed-request share, release health); 1.2.0 and
+older send error counts only, so upgrade edge services to 1.3.0. Self-hosted
+ingesters need 1.10.0 (`edge_request_counts` in `/v1/compat`). Next.js `middleware.ts` should report
 under its own service name; if it must share the Node server's name, pass
 `countRequests: false` so no request is counted twice.
 

@@ -2,7 +2,7 @@
 name: autter-runtime-setup
 description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, error stacks, source maps, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
 metadata:
-  version: "1.9.0"
+  version: "1.10.0"
   author: autter
   tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
 ---
