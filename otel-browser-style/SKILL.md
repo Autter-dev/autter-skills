@@ -367,6 +367,19 @@ initAutterBrowser(withFilters({
 `beforeSend` still runs, after the filters. `@autter/runtime-next/client`
 re-exports `withFilters`.
 
+## The signed-in user, and an ID they can quote
+
+Call `setUser(id)` once the app knows who is signed in, and `setUser(null)` on
+sign-out. Use the opaque id the support tool knows the customer by, the same
+one the backend records as `enduser.id`; never an email or a name. Autter uses
+it to link support tickets and "it didn't work" reports to that customer's
+browser errors.
+
+When a request to the app's API fails, the error UI can show the user the
+`x-request-id` from the failed response as `Request ID: <id>`, so a ticket
+that quotes it matches the server request and its errors. That changes what
+users see: propose it and add it with the user's go-ahead.
+
 ## API surface
 
 ```ts
@@ -374,7 +387,7 @@ initAutterBrowser({ endpoint, clientKey?, service, environment?, release?, sessi
 captureException(error, context?);       // report a caught error; context.fingerprint overrides grouping (1.6.0)
 captureMessage(message, severity?, context?); // warning/info without an exception — severity "fatal"|"error"|"warning"|"info", default "warning"
 trackEvent(name, props?);                 // coarse usage counter — no PII in props
-setUser(id | null);                       // opaque id ONLY — never an email/name
+setUser(id | null);                       // opaque id ONLY — never an email/name; the same id the server records as enduser.id
 setContext(context | null);               // merged into every subsequent event
 flush();                                   // force-send the queue now (rarely needed — auto-flushes)
 

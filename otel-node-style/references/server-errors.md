@@ -157,6 +157,9 @@ export { onRequestError } from "@autter/runtime-next/instrumentation";
   `next.router_kind`, `next.route_type`, `next.render_source`,
   `next.digest` (matches the `digest` an error boundary sees), the method and
   the path without its query string. Headers and cookies are never read.
+- A support ticket that quotes the digest (`Digest: 2338492983`) is linked to
+  the error. If the app's `error.tsx` shows a custom message, offer to show
+  `error.digest` there with that label, with the user's go-ahead.
 - Redirects, `notFound()` and Next's other control-flow signals are not
   reported. The `capture` option (`true` or a predicate) changes that; leave
   it unset.

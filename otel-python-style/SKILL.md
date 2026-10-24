@@ -193,21 +193,21 @@ restart in each worker. A process that already has an SDK provider (a second
 call, or `opentelemetry-instrument`) keeps it: `init_tracing()` returns it
 and warns when its sampler drops errors.
 
-Metrics are not part of `init_tracing()`. Register a meter provider with the
-same resource next to it: the framework instrumentors only emit the
-`http.server.duration` histogram — what feeds Autter's request rollups and
-slow-process monitor — once a meter provider is registered. Without it, usage
-stats degrade to 1%-sampled trace rollups.
+Turn on request counting in the same call. Without it, request counts read
+only the head-sampled traces while every error is kept, so at a 1% ratio error
+rates (release health, the post-deploy check of Autter's fixes) read about a
+hundred times too high, and a meter provider's default **cumulative**
+`http.server.duration` is not counted at all. `count_requests=True` (or
+`AUTTER_COUNT_REQUESTS=true`) records every HTTP request once, sampled or not,
+in a delta histogram on `/v1/metrics`, and registers its meter provider as
+the global one. Do not register another meter provider: if one already exists
+when `init_tracing()` runs, counting stays off with a warning.
 
 ```python
 # observability.py
 import os
 import uuid
 
-from opentelemetry import metrics
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 
 from autter_tracing import init_tracing
@@ -219,18 +219,19 @@ def init_observability():
         "service.instance.id": os.environ.get("AUTTER_RUNTIME_INSTANCE_ID") or str(uuid.uuid4()),
     })
     # Endpoint, key header and sampler come from the OTEL_* variables;
-    # errors are exported whatever the ratio.
-    init_tracing(resource=resource)
-    metrics.set_meter_provider(MeterProvider(
-        resource=resource,
-        metric_readers=[PeriodicExportingMetricReader(
-            OTLPMetricExporter(), export_interval_millis=60_000,
-        )],
-    ))
+    # errors are exported whatever the ratio, and every request is counted.
+    init_tracing(resource=resource, count_requests=True)
 ```
 
-Add this after the meter provider is registered in each worker. It uses the
-same exporter and does not initialize another SDK:
+It needs `opentelemetry-exporter-otlp-proto-http` and an `autter_tracing.py`
+copied after 2026-10-24: an older copy rejects `count_requests`, so copy it
+again. Self-hosted ingesters need the first release after 1.9.0 (the hosted
+ingester counts it already). The framework instrumentations' own HTTP
+duration histograms are dropped so no request is counted twice. gRPC server
+spans keep their span-fed counts.
+
+Add this after `init_observability()` in each worker. It adds a gauge to the
+helper's meter provider and does not initialize another SDK:
 
 ```python
 import psutil
@@ -394,6 +395,33 @@ both arrive in the same export batch. The exception-group and
 standard-library rules are live on the hosted ingester; self-hosted
 ingesters need the first release after 1.7.0 (1.7.0 and older group those
 errors by their message or by standard library frames).
+
+## The user behind a request, and an ID they can quote
+
+Where the app resolves the signed-in user (auth middleware, a dependency, a
+decorator), put the opaque id the support tool knows the customer by on the
+request's server span. Errors recorded on that span carry it:
+
+```python
+from opentelemetry import trace
+
+trace.get_current_span().set_attribute("enduser.id", str(user.id))  # opaque id only, never an email or a name
+```
+
+Autter uses it to link support tickets and "it didn't work" reports to that
+customer's errors. Skip it, and say so in the hand-off, when the app only knows
+users by email.
+
+When a request fails, the app's error page or error body can show the user
+the trace id, labelled so a ticket that quotes it matches:
+
+```python
+ctx = trace.get_current_span().get_span_context()
+trace_id = trace.format_trace_id(ctx.trace_id) if ctx.is_valid else None
+# render f"Trace ID: {trace_id}" on the error page / in the JSON error body
+```
+
+That changes what users see: propose it and add it with the user's go-ahead.
 
 ## Intentional warning issues
 

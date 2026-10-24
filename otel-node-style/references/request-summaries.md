@@ -95,7 +95,10 @@ error's own status. Do not add them automatically:
 - If it has none and is a JSON API, offer `autterErrorResponse()` as an
   improvement and add it only with the user's go-ahead.
 - To surface the request id without changing response shape, include
-  `runtimeContext.requestId` in the existing error body or support page.
+  `runtimeContext.requestId` in the existing error body or support page,
+  labelled `Request ID: <id>`. Autter matches support tickets that quote the
+  labelled id (or a `req_` prefixed one) to the request and its errors; a bare
+  UUID is not recognised.
 
 ## Context and coded errors (optional, while you are there)
 

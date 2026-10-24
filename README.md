@@ -20,8 +20,9 @@ Then tell your agent what you want:
 
 - **"Use Autter's memory, wiki, and learnings to understand this repo before coding."** —
   runs `autter-repo-context`, which reads the signed-in user's memory, the
-  repository's wiki, accepted learnings, and indexed architecture through the
-  authenticated Autter MCP.
+  repository's wiki, accepted learnings, production lessons, and indexed
+  architecture through the authenticated Autter MCP, and checks the change
+  against production lessons before committing.
 - **"use the skills to install Autter Runtime in this project."** — runs
   `autter-runtime-setup`, which inventories your repo and routes each
   service to the right style skill automatically — you don't need to pick
@@ -33,7 +34,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 
 | Skill | Covers |
 | --- | --- |
-| [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, repository wiki Markdown, accepted process learnings and team rules, and indexed code/architecture/run commands through Autter MCP. Uses source commits and freshness metadata to ground coding work in how the user works and how the platform is built. |
+| [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, repository wiki Markdown, accepted process learnings and team rules, production lessons for the files being edited, and indexed code/architecture/run commands through Autter MCP. Checks the diff with `check_change` before committing and rates the lessons it used. Uses source commits and freshness metadata to ground coding work in how the user works, how the platform is built, and what already broke in production. |
 | [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, checks installed and deployed capabilities (through `get_runtime_setup` when Autter MCP is connected), configures the chosen ingestion path, routes built frontends to source-map upload and Next.js apps to server error capture, verifies stored traces/errors with readable stacks, breadcrumbs and trace links, metrics, logs/operations and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS), Next.js and edge runtimes (Workers, Vercel Edge, Deno, Bun), via `@autter/runtime-node` / `@autter/runtime-next` / `@autter/runtime-edge`, including per-request summaries, server error hooks that keep stacks, and Next.js server errors through `onRequestError`. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including source-map upload in four steps (check, `autter-runtime sourcemaps setup`, an upload-only key stored straight into CI, `sourcemaps verify`), breadcrumbs, links from browser errors to server traces, CSP violations and privacy-conscious recent action context. |
@@ -46,11 +47,14 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 Connect your agent to `https://api.autter.dev/mcp` with OAuth and select the
 organization containing your repository. Repository knowledge reads require
 `mcp:read`; they do not require a Runtime ingest key or an SDK install.
+`check_change` also needs `mcp:llm`, and `rate_lesson` needs `mcp:write`.
 `autter-repo-context` uses `whoami` to match the repository, `get_memory` for
-every member's notes in the organization, `get_wiki` for stored pages, `get_learnings` for
-accepted conventions, and `get_repo_index` for implementation evidence. It
-checks stored freshness against the current checkout and reports missing
-sources explicitly.
+the user's own notes and the pages other members shared, `get_wiki` for stored
+pages, `get_learnings` for accepted conventions, `get_file_context` and
+`get_lessons` for the production lessons in reach of the files it edits,
+`check_change` on the diff before committing, and `get_repo_index` for
+implementation evidence. It checks stored freshness against the current
+checkout and reports missing sources explicitly.
 
 The `get_wiki` tool requires a backend deployment that includes it. Refresh
 the client's MCP tool list after that deployment. If it is unavailable, the
@@ -115,7 +119,7 @@ var by name; the value never needs to reach the agent.
 
 The setup skills cover request histograms, release identity, and trace comparison requirements. Node/Next.js examples use SDK 1.3.2 and opt into bounded slow-request retention. External OTel exporters need explicit-bucket delta histograms. Self-hosted ingesters require 1.3.1 or later.
 
-Enabling detection in the platform does not update customer SDKs. Incident feedback lets a team mark a diagnosis as correct, incorrect, or expected. Fixes remain draft pull requests for human review. Production verification uses existing telemetry; selftests belong only in isolated test environments.
+Enabling detection in the platform does not update customer SDKs. Incident feedback lets a team mark a diagnosis as correct, incorrect, or expected. Fixes open as draft pull requests labelled Verified, Builds or Proposal only, and a person merges them, unless the repository turned on auto-merge for verified, non-breaking fixes (off by default). Production verification uses existing telemetry; selftests belong only in isolated test environments.
 
 Full docs: [github.com/Autter-dev/autter-runtime](https://github.com/Autter-dev/autter-runtime).
 

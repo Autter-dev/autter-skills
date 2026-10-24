@@ -81,7 +81,7 @@ The general environment setup below is not sufficient for endpoint detection on 
 
 Include route templates, HTTP methods, the deployed commit SHA, stable service and environment names, and a unique service instance ID. Keep normal traces and add supported slow-request retention and dependency child spans where needed. `retainTracesAboveMs` applies only to the Node/Next.js SDK. Never calculate endpoint p95 from sampled traces.
 
-Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). The platform rollout does not update application settings. Fixes remain draft pull requests for human review. Use existing production telemetry for verification; run selftests only in an isolated test environment.
+Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). The platform rollout does not update application settings. Fixes open as draft pull requests labelled Verified, Builds or Proposal only, and a person merges them, unless the repository turned on auto-merge for verified, non-breaking fixes (off by default). Use existing production telemetry for verification; run selftests only in an isolated test environment.
 
 Search for `"<language> opentelemetry sdk"` if you don't already know the
 package name — e.g.:
@@ -194,6 +194,15 @@ event. That event creates an occurrence with the selected severity. Ordinary
 deprecations, retries and recovered failures use the logs pipeline above.
 Do not mark successful spans ERROR or fabricate an exception for every log.
 Keep issue messages PII-free and template-stable for grouping.
+
+**The user behind a request**: where the app resolves the signed-in user, set
+`enduser.id` on the request's server span to the opaque id the support tool
+knows the customer by (never an email or a name). Errors recorded on that span
+carry it, which lets Autter link support tickets and "it didn't work" reports
+to that customer's errors. When a request fails, the app can show the user
+`Trace ID: <32-hex trace id>` on its error page or error body so a ticket that
+quotes it matches; that changes what users see, so propose it and add it with
+the user's go-ahead.
 
 ## Step 5: Sampling guidance
 

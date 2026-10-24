@@ -131,6 +131,29 @@ user's go-ahead, because it changes error response bodies. Koa and plain
 `initAutterLogging` variant for apps with their own OTel SDK, and
 verification.
 
+### The user behind a request, and an ID they can quote
+
+Where the app resolves the signed-in user (auth middleware, inside the request
+boundary), record the opaque id the support tool knows the customer by:
+
+```js
+const { runtimeContext } = require("@autter/runtime-node");
+
+runtimeContext.set({ "enduser.id": String(user.id) }); // opaque id only, never an email or a name
+// edge handlers wrapped in withAutter: rt.set({ "enduser.id": String(user.id) })
+```
+
+Use the flat `"enduser.id"` key: a nested `{ user: { id } }` reaches traces as
+a JSON string. Autter uses it to link support tickets and "it didn't work"
+reports to that customer's requests and errors. Skip it, and say so in the
+hand-off, when the app only knows users by email.
+
+When a request fails, show the user `Request ID: <id>` (`runtimeContext.requestId`,
+also in the `x-request-id` header) on the existing error page, error body or
+support form, so a ticket that quotes it matches. That changes what users see:
+propose it and add it with the user's go-ahead (see
+[Error responses](references/request-summaries.md#error-responses-ask-first)).
+
 ### Server errors keep their stacks (always add, 1.6.0)
 
 Add the framework's error hook so a thrown error is recorded with its stack
@@ -500,6 +523,12 @@ AUTTER_RUNTIME_KEY`, or the platform's secret store), never a client key and
 never a value in `wrangler.toml`. Do not install `@autter/runtime-node` in an
 edge bundle.
 
+From the first `@autter/runtime-edge` release after 1.2.0, each request is also
+counted from its summary (request counts, failed-request share, release
+health); 1.2.0 sends error counts only. Next.js `middleware.ts` should report
+under its own service name; if it must share the Node server's name, pass
+`countRequests: false` so no request is counted twice.
+
 Errors thrown from the handler are reported by `withAutter`. For scheduled
 and queue handlers outside it, report with `captureEdgeException(options,
 error, attributes?)` (1.1.0) and keep the handler's existing failure
@@ -510,7 +539,7 @@ behavior; see the [server errors reference](references/server-errors.md).
 - The setup examples opt into slow successful trace retention with `retainTracesAboveMs: 2000`. The SDK default is off. Choose the threshold for the service and check export volume. Retention has buffer and time limits and covers only the local process; traces can be incomplete.
 - Use the actual deployment environment and commit SHA in the examples. Endpoint detection requires request histograms, not percentiles from sampled traces. The server rollout does not upgrade an installed SDK or enable its retention option.
 - Add needed database or dependency instrumentation through the existing `instrumentations` option. Normal and slow traces need child spans before the platform can produce a useful draft fix. Missing historical traces cannot be recovered.
-- Self-hosted ingesters require 1.3.1 or later for numeric delta histograms. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). Fixes remain draft pull requests for human review, not automatic deployments or rollbacks.
+- Self-hosted ingesters require 1.3.1 or later for numeric delta histograms. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). Fixes open as draft pull requests labelled Verified, Builds or Proposal only, and a person merges them, unless the repository turned on auto-merge for verified, non-breaking fixes (off by default). Autter never deploys or rolls back on its own.
 
 - Trace sampling: 1% of successful traces (`traceSampleRate`, default
   `0.01`). Captured exceptions bypass sampling entirely — always sent.

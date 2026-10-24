@@ -267,6 +267,28 @@ it as part of setup without waiting to be asked:
   failed fetch/XHR calls, which links a browser error to its server request.
   The Node middleware exposes the header to CORS automatically.
 
+### Who hit it, and an ID they can quote (default when the app has signed-in users)
+
+Autter links a support ticket to the errors behind it, and finds what failed
+for a customer who reports "it didn't work" without an error message. Both
+need the same two things from the app:
+
+- **An opaque user id on requests and errors.** Record the id the support tool
+  (Intercom, Zendesk, Linear, …) knows the customer by, as `enduser.id`:
+  `runtimeContext.set({ "enduser.id": id })` inside the Node/Next.js request
+  boundary, `rt.set({ "enduser.id": id })` in edge handlers, `setUser(id)` in
+  the browser with the same id, and the `enduser.id` attribute on the server
+  span in Python, Go, Rust and other OTel services. Set it once, where the app
+  resolves the signed-in user (auth middleware). Never an email, a name or a
+  phone number; if the app has no opaque id, skip this and say so in the
+  hand-off.
+- **A request ID people can quote.** When a request fails, show the user its
+  id with a label, `Request ID: <id>` (from `runtimeContext.requestId`, or
+  the `x-request-id` response header in a frontend), or `Trace ID: <trace id>`
+  in services without an Autter request boundary. Tickets are matched on the
+  labelled form. Adding it to an error page, error body or support form
+  changes what users see: propose it and add it with the user's go-ahead.
+
 ### Runtime 1.6.0 and 1.7.0: error stacks, source maps, breadcrumbs and trace links
 
 Runtime 1.6.0 ships `@autter/runtime-node`, `@autter/runtime-next` and
@@ -359,7 +381,7 @@ Endpoint regression detection is separate from the slow-process monitor. It comp
 - Add database and dependency child spans where needed. HTTP instrumentation alone does not measure all database work.
 - Do not calculate p95 from sampled or selectively retained traces. Missing historical histogram buckets and discarded traces cannot be recreated.
 
-Team feedback means **Correct diagnosis**, **Incorrect diagnosis**, or **Expected behavior** on an incident. The latest feedback controls further fix work. Incorrect or expected feedback stops new fix work; it does not prove recovery. A fix requires trace and source evidence and creates a draft pull request. Keep human review before merge and deployment. Do not add automatic merge, deployment, or rollback.
+Team feedback means **Correct diagnosis**, **Incorrect diagnosis**, or **Expected behavior** on an incident. The latest feedback controls further fix work. Incorrect or expected feedback stops new fix work; it does not prove recovery. A fix requires trace and source evidence and creates a draft pull request labelled **Verified** (a repro test failed before the fix and passes with it), **Builds** (the project's checks pass, but the error was not reproduced) or **Proposal only**. Repository settings → Runtime → Draft fix PRs chooses which labels open a pull request by themselves. A person merges fixes unless the repository turned on **Auto-merge** for verified, non-breaking fixes; it is off by default, and Autter opens a revert pull request if an auto-merged fix's error comes back. Never turn auto-merge on unless the user asks, and do not add automatic merge, deployment, or rollback to the user's own pipeline.
 
 See [Endpoint regression telemetry](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md) for the telemetry contract and retention limits.
 
@@ -657,7 +679,8 @@ When you write or change code here:
   (`autterRequests` / `autterFastify` mounted before routers;
   `withRuntimeRequest` around each new Next.js route handler). Add new probe or
   metrics endpoints to its `ignore` list. Attach request context with
-  `runtimeContext.set(...)`, not by logging it separately.
+  `runtimeContext.set(...)`, not by logging it separately. The signed-in
+  user's opaque id goes on as `enduser.id`, never an email or a name.
 - **Server errors:** keep the framework error hook in place
   (`autterErrorHandler` after the routes and before the app's own error
   handlers; `autterFastifyErrors` or `autterFastify`; `autterKoa`;
@@ -723,8 +746,8 @@ Tell the user, concisely:
   not covered (Next 14, edge route handlers outside `next start`, frameworks
   without an error hook). Name these as pending when 1.6.0 is not published.
 - Which Python services start tracing with `init_tracing()` (errors kept at
-  any sampling ratio) and which run `opentelemetry-instrument` at full
-  sampling instead; Django services with `ClientErrorResponses`; Python
+  any sampling ratio), whether request counting (`count_requests=True`) is on,
+  and which run `opentelemetry-instrument` at full sampling instead; Django services with `ClientErrorResponses`; Python
   error handlers that answer exceptions and now record them. Self-hosted
   ingesters at 1.7.0 or older group Python exception groups by message and
   count standard library frames as in-app; the hosted ingester already has
@@ -747,6 +770,11 @@ Tell the user, concisely:
   deployed capabilities were verified, and which upgrades/redeploys are pending.
   Distinguish stored logs, linked evidence, completed analysis, and a validated
   fix; neither a log nor a queued fix is proof of successful remediation.
+- Where the opaque user id is recorded (`enduser.id` / `setUser`) and from
+  what, or why it was skipped; whether failing requests show users a labelled
+  Request ID or Trace ID, or that this was proposed and left for the user's
+  go-ahead. Both let support tickets and "it didn't work" reports find the
+  errors behind them.
 - Whether browser events go through a relay or direct client key, and why.
 - What env var(s) they still need to fill in (if the key wasn't available
   yet).
