@@ -1,11 +1,11 @@
 interface:
   display_name: "Autter repository context"
   short_description: "Use memory, wiki, learnings, and production lessons as coding context"
-  default_prompt: "Use $autter-repo-context to read the user's memory, then this repository's wiki, learnings, production lessons, and architecture before making the requested change, and check the diff with check_change before committing."
+  default_prompt: "Use $autter-repo-context to read the user's memory and this repository's shared memory for the files you will change, then its wiki, learnings, production lessons, and architecture before making the requested change, and check the diff with check_change before committing."
 dependencies:
   tools:
     - type: "mcp"
       value: "autter"
-      description: "User memory, repository wiki, learnings, production lessons, and indexed code context"
+      description: "User memory, repository memory, wiki, learnings, production lessons, and indexed code context"
       transport: "streamable_http"
       url: "https://api.autter.dev/mcp"
