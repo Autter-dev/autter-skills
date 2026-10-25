@@ -20,9 +20,10 @@ Then tell your agent what you want:
 
 - **"Use Autter's memory, wiki, and learnings to understand this repo before coding."** —
   runs `autter-repo-context`, which reads the signed-in user's memory, the
-  repository's wiki, accepted learnings, production lessons, and indexed
-  architecture through the authenticated Autter MCP, and checks the change
-  against production lessons before committing.
+  repository's shared memory for the area being changed (what breaks there,
+  what worked and what did not), its wiki, accepted learnings, production
+  lessons, and indexed architecture through the authenticated Autter MCP, and
+  checks the change against production lessons before committing.
 - **"use the skills to install Autter Runtime in this project."** — runs
   `autter-runtime-setup`, which inventories your repo and routes each
   service to the right style skill automatically — you don't need to pick
@@ -34,7 +35,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 
 | Skill | Covers |
 | --- | --- |
-| [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, repository wiki Markdown, accepted process learnings and team rules, production lessons for the files being edited, and indexed code/architecture/run commands through Autter MCP. Checks the diff with `check_change` before committing and rates the lessons it used. Uses source commits and freshness metadata to ground coding work in how the user works, how the platform is built, and what already broke in production. |
+| [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, the repository's shared memory (a map, one page per area of the codebase, and a what-works ledger, rewritten nightly from the team's agent sessions, reviews, production, CI and scans) before editing an area, repository wiki Markdown, accepted process learnings and team rules, production lessons for the files being edited, and indexed code/architecture/run commands through Autter MCP. Checks the diff with `check_change` before committing and rates the lessons it used. Uses source commits and freshness metadata to ground coding work in how the user works, how the platform is built, and what already broke in production. |
 | [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, checks installed and deployed capabilities (through `get_runtime_setup` when Autter MCP is connected), configures the chosen ingestion path, routes built frontends to source-map upload and Next.js apps to server error capture, verifies stored traces/errors with readable stacks, breadcrumbs and trace links, metrics, logs/operations and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS), Next.js and edge runtimes (Workers, Vercel Edge, Deno, Bun), via `@autter/runtime-node` / `@autter/runtime-next` / `@autter/runtime-edge`, including per-request summaries, server error hooks that keep stacks, and Next.js server errors through `onRequestError`. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including source-map upload in four steps (check, `autter-runtime sourcemaps setup`, an upload-only key stored straight into CI, `sourcemaps verify`), breadcrumbs, links from browser errors to server traces, CSP violations and privacy-conscious recent action context. |
@@ -49,12 +50,23 @@ organization containing your repository. Repository knowledge reads require
 `mcp:read`; they do not require a Runtime ingest key or an SDK install.
 `check_change` also needs `mcp:llm`, and `rate_lesson` needs `mcp:write`.
 `autter-repo-context` uses `whoami` to match the repository, `get_memory` for
-the user's own notes and the pages other members shared, `get_wiki` for stored
+the user's own notes and the pages other members shared, `get_repo_memory` and
+`search_context` for the repository's shared memory of the area it is about to
+change (`update_repo_memory_page`, which needs `mcp:write`, records what it
+learned), `get_wiki` for stored
 pages, `get_learnings` for accepted conventions, `get_file_context` and
 `get_lessons` for the production lessons in reach of the files it edits,
 `check_change` on the diff before committing, and `get_repo_index` for
 implementation evidence. It checks stored freshness against the current
 checkout and reports missing sources explicitly.
+
+With the [Autter CLI](https://github.com/Autter-dev/autter-cli) installed,
+`autter install` also puts repository memory into the session automatically in
+Claude Code, Codex, Gemini CLI, Droid, GitHub Copilot, OpenCode, Amp and Pi (the
+map at session start, the matching sections with each prompt, an area's page
+when a file in it is read). The skill covers every other agent, and tells all of
+them to read an area's page before changing code in it; `autter memory` prints
+the same memory in a terminal.
 
 The `get_wiki` tool requires a backend deployment that includes it. Refresh
 the client's MCP tool list after that deployment. If it is unavailable, the
