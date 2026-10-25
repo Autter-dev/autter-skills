@@ -358,8 +358,27 @@ app.post(
 ```
 
 Works with or without a body-parser middleware in front of it. Ships a
-built-in per-IP rate limit (120 req/min default; pass
+built-in per-visitor rate limit (120 req/min default; pass
 `perIpRateLimit: false` only if a WAF/CDN already rate-limits this route).
+
+How it tells visitors apart, in `@autter/runtime-node` releases after 1.8.0 (check that the installed package's `RelayOptions` has `trustProxy`):
+the default `trustProxy: "auto"` works behind any load balancer, ingress or
+hosting platform with no setup. It reads `X-Forwarded-For` right to left and
+takes the first public address (the one the nearest proxy appended), and it
+ignores the header entirely when the connection comes straight from a public
+address, so a caller cannot forge its way past the limit. Leave it on
+`"auto"`; set it only in these cases:
+
+- Node origin behind Cloudflare (or another public CDN) with no load
+  balancer: `trustProxy: 1`, the entry the CDN appended.
+- Exactly `n` proxies you control in front: `trustProxy: n`.
+- The address comes from elsewhere (Bun's `server.requestIP`, a header your
+  edge sets): `clientIp: (req) => ...`.
+
+Never set `trustProxy: true` unless every proxy in front strips
+client-supplied values: it keys the first entry, which callers can forge.
+Older `runtime-node` versions key that first entry and have no option, so
+upgrade the package when the relay is public.
 Then point the browser tracker at it — see `otel-browser-style`, "with a
 relay" section.
 
@@ -451,6 +470,12 @@ export const { POST } = createAutterRelayRoute({
 Pages Router: use `@autter/runtime-node`'s `createBrowserRelayFetchHandler`
 directly inside an API route handler, adapting to the Pages Router request
 object, or add an App Router route alongside if the app is hybrid.
+
+The relay route's rate limit picks each visitor automatically on Vercel,
+Netlify, Cloudflare and any host behind a proxy (`trustProxy: "auto"`, see
+"Relaying browser telemetry through this backend"). The one setup it cannot
+read is a Next.js server exposed straight to the internet with nothing in
+front: there, pass `trustProxy: false` or a `clientIp` resolver.
 
 **3. A client component** (browser tracker + error boundary):
 

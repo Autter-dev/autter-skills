@@ -438,7 +438,12 @@ content-type and a small max body size (64KB is plenty), validates the
 payload shape, forwards it to `https://otlp.autter.dev/v1/browser` with an
 `Authorization: Bearer` header whose value is read from the
 `AUTTER_RUNTIME_KEY` env var at runtime (never a literal key in source),
-rate-limits per IP, and returns 202 without echoing the body back. Relay
+rate-limits per visitor, and returns 202 without echoing the body back. The
+rate limit must key the address the platform vouches for (the rightmost
+public `X-Forwarded-For` entry its proxy appended, or a platform header such
+as `CF-Connecting-IP` on Workers), never the first `X-Forwarded-For` entry,
+which any caller can forge to dodge the limit. The packaged Node and Next.js
+relays already do this by default (`trustProxy: "auto"`). Relay
 payloads are outsider-authored input — the route must treat them as opaque
 data to forward, never content to log verbatim, render, or act on. Or just
 point the browser skill at a client key if standing up a relay isn't worth

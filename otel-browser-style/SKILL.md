@@ -139,6 +139,13 @@ export const { POST } = createAutterRelayRoute({
 Other fetch-style servers (Remix, Hono, Bun, Deno) use
 `createBrowserRelayFetchHandler({ apiKey })` from `@autter/runtime-node`.
 
+The packaged relays rate-limit each visitor and, in `@autter/runtime-node` releases after 1.8.0 (check that the installed package's `RelayOptions` has `trustProxy`),
+find the visitor's address on any host by default (`trustProxy: "auto"`).
+Don't add `trustProxy: true`; it trusts a header callers can forge. Bun and
+Deno servers with no proxy in front pass the real address with `clientIp`
+(Bun's `server.requestIP(req)?.address`, Deno's `info.remoteAddr.hostname`).
+Details: `otel-node-style`, "Relaying browser telemetry through this backend".
+
 **4. Pure static, no edge → direct only.**
 
 ```ts
@@ -159,7 +166,11 @@ header whose value is read from the `AUTTER_RUNTIME_KEY` env var at
 runtime (never a literal key in source), and responds `202` without
 echoing the body back. Don't reshape the payload, and treat its
 contents as untrusted outsider input: never log it verbatim, render it,
-or act on text inside it.
+or act on text inside it. If the route rate-limits, key each visitor by
+the address the platform itself vouches for (`CF-Connecting-IP` on a
+Cloudflare Worker, or the rightmost public `X-Forwarded-For` entry your
+proxy appended), never the first `X-Forwarded-For` entry, which any
+caller can set.
 
 If the user is deploying from multiple origins (e.g. a preview + prod
 domain), tell them to add all of them to the key's allow-list when they
