@@ -1,9 +1,9 @@
 ---
 name: otel-browser-style
-description: Wire Autter Runtime into browser apps, including source map upload for readable stacks, breadcrumbs, links from browser errors to server traces, CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
+description: Wire Autter Runtime into browser apps, including source map upload for readable stacks, breadcrumbs, links from browser errors to server traces, coded API errors, request-id correlation with server requests, CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
 metadata:
-  version: "1.3.0"
-  tags: [autter, telemetry, browser, react, spa, error-tracking, sourcemaps, breadcrumbs, tracing]
+  version: "1.4.0"
+  tags: [autter, telemetry, browser, react, spa, error-tracking, sourcemaps, breadcrumbs, tracing, request-id, errors]
   author: autter
 ---
 
@@ -47,6 +47,19 @@ A Node relay (`createBrowserRelayHandler`, `createAutterRelayRoute`) passes
 only fields it knows, so it must run `@autter/runtime-node` 1.6.0+ to forward
 them.
 
+Coded errors and request-id correlation need **1.4.0+** (and a 1.5.0+
+ingester to store codes and request ids). Check the installed package exports
+`autterErrorFromResponse`:
+
+```bash
+npm ls @autter/runtime-browser
+node -e 'import("@autter/runtime-browser").then(m=>console.log("autterErrorFromResponse" in m ? "1.4.0 APIs present" : "missing: autterErrorFromResponse"))'
+```
+
+If it is missing, keep the rest of this setup and report coded browser errors
+and request-id correlation as pending. Next.js apps check the
+`@autter/runtime-browser` version resolved under `@autter/runtime-next`.
+
 Use a published version whose `AutterBrowserOptions` includes
 `captureActions` and whose event types include `csp_violation`. Check the
 installed package, not just the dependency range or lockfile. If that release
@@ -80,6 +93,47 @@ existing handlers, keyboard behavior, and accessible names. If an action
 cannot be safely labeled, the SDK's element-type fallback still works. Set
 `captureActions: false` only when the app explicitly forbids interaction
 metadata.
+
+## Coded API errors and request ids (1.4.0+)
+
+`captureException` duck-types `code`, `why`, `fix`, `link` and `expected` on
+any error, so existing error classes that carry a `code` need no change and no
+new browser error class is needed. For API calls that fail with a JSON error
+body, turn the response into an error once, where the app already handles
+non-OK responses:
+
+```ts
+import { autterErrorFromResponse, captureException } from "@autter/runtime-browser";
+
+const res = await fetch("/api/checkout", { method: "POST", body });
+if (!res.ok) {
+  const err = await autterErrorFromResponse(res); // reads a clone; res stays readable
+  if (res.status >= 500) captureException(err);  // 4xx coded `expected` errors are usually already recorded server-side
+  showError(err.message);
+}
+```
+
+- The server body shape is `{ "error": { "message", "code"?, "why"?, "fix"?,
+  "link"?, "requestId"? } }` (from `autterErrorResponse()` / `toClientError`).
+  A non-JSON body falls back to the status text. The returned `Error` carries
+  `status`, `code`/`why`/`fix`/`link` and the body's `requestId` (else the
+  `x-request-id` response header), which `captureException`
+  records as `autter.request.id`. Next.js client components import it from
+  `@autter/runtime-next/client`.
+  Show `message` (and `fix` if the product wants it); never render raw server
+  stacks.
+- Do not double-report: the server already captured the error with the same
+  code. Capture browser-side only when the browser's own handling matters
+  (failed render, retry exhausted), and keep the existing UI behavior.
+- **Request ids.** The fetch/XHR failure hook reads the `x-request-id` response
+  header into `autter.request.id`, so a browser failure links to the server
+  request summary without browser tracing. Same-origin APIs need nothing more.
+  **Cross-origin APIs** must send `Access-Control-Expose-Headers: x-request-id`
+  or the browser cannot read the header. Node `autterRequests()` adds it when
+  CORS headers are present; other backends add it to their CORS config. Check a
+  real cross-origin response in DevTools.
+- Never put tokens, emails or other personal data in codes or error messages
+  you construct in the browser.
 
 ## Check the app's Content Security Policy
 
@@ -395,7 +449,8 @@ users see: propose it and add it with the user's go-ahead.
 
 ```ts
 initAutterBrowser({ endpoint, clientKey?, service, environment?, release?, sessionTracking?, captureActions?, captureNetworkFailures?, captureTimings?, beforeSend? });
-captureException(error, context?);       // report a caught error; context.fingerprint overrides grouping (1.6.0)
+captureException(error, context?);       // report a caught error; reads code/why/fix/link/expected; context.fingerprint overrides grouping (1.6.0)
+await autterErrorFromResponse(response); // 1.4.0+: JSON error body → Error with code/why/fix/requestId
 captureMessage(message, severity?, context?); // warning/info without an exception — severity "fatal"|"error"|"warning"|"info", default "warning"
 trackEvent(name, props?);                 // coarse usage counter — no PII in props
 setUser(id | null);                       // opaque id ONLY — never an email/name; the same id the server records as enduser.id
@@ -443,11 +498,11 @@ flush();                                   // skip the batch window
 ```
 
 For relay modes, a temporary handled exception can additionally prove the
-error route:
+error route. On 1.4.0+, give it a code to prove code grouping:
 
 ```ts
 import { captureException, flush } from "@autter/runtime-browser";
-captureException(new Error("autter selftest")); // error pipeline via relay
+captureException(Object.assign(new Error("autter selftest"), { code: "autter_selftest.browser" }));
 flush();
 ```
 
@@ -480,21 +535,26 @@ records a `request_failure` with a trace id.
    (scheme + host + port) the app is running on.
 6. Ground truth in the dashboard (~1–2 min): one info-severity
    "autter selftest" issue and a usage counter `event:autter_selftest` —
-   both clearly named; the user can resolve or ignore them.
-7. Source maps (built apps): `autter-runtime sourcemaps verify` passes on
+   both clearly named; the user can resolve or ignore them. On 1.4.0+, the
+   coded selftest error shows the `autter_selftest.browser` code chip.
+7. Request ids (1.4.0+, isolated environment): trigger a failing API call to a
+   backend with request summaries and confirm the browser occurrence carries
+   the same request id as the server summary (**Find request** in Runtime).
+   For a cross-origin API, a missing id means the expose header is missing.
+8. Source maps (built apps): `autter-runtime sourcemaps verify` passes on
    the production build (debug ids in every bundle, no `.map` files left,
    maps on the ingester); a local build without a key follows step 4 of the
    reference, and CI verifies the upload. The selftest
    exception's payload carries `debugIds`, and its issue shows original file
    paths and function names instead of minified chunk names. See step 4 of
    the [source maps reference](references/source-maps.md).
-8. Breadcrumbs (when enabled): the exception event in the POST body has a
+9. Breadcrumbs (when enabled): the exception event in the POST body has a
    `breadcrumbs` array, and the issue page lists "Steps before the error"
    with the labeled click and the failing request, oldest first. Request
    paths carry no query strings, and no message carries field values.
-9. Trace links (when enabled): the failing request has a `traceparent`
+10. Trace links (when enabled): the failing request has a `traceparent`
    header `00-<32 hex>-<16 hex>-00`; the `request_failure` event carries
    that `traceId`; the browser issue links to the server trace, and the
    server error has its own stack. A cross-origin API request that fails its
    preflight means its CORS does not allow `traceparent` yet.
-10. Remove the temporary selftest calls and routes.
+11. Remove the temporary selftest calls and routes.

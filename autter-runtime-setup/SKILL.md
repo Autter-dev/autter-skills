@@ -1,10 +1,10 @@
 ---
 name: autter-runtime-setup
-description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, error stacks, source maps, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
+description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, coded errors, error stacks, source maps, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
 metadata:
   version: "1.10.0"
   author: autter
-  tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions]
+  tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions, requests, errors]
 ---
 
 # Autter Runtime Setup
@@ -130,8 +130,17 @@ and its `ignore` list depend on them. For each frontend, note its build tool
 (Vite, webpack, Rollup, Next.js, CRA-style, or none) and where the production
 build runs (which CI workflow or hosting platform); the source-map upload
 hooks into that build. For Next.js, note the Next version and any existing
-`next.config` wrappers or `onRequestError` export. Show the user the list
-before proceeding, e.g.:
+`next.config` wrappers or `onRequestError` export. Also note, per service:
+
+- **request entry points**: HTTP apps/routers, fetch handlers, Next.js route
+  handlers and `middleware.ts`, edge workers;
+- **job consumers and queues**: BullMQ/SQS/Kafka/Celery consumers, crons, and
+  where jobs are enqueued (carrier propagation points);
+- **existing error classes** that carry a `code`/`status` (`AppError`,
+  `HttpError`, domain errors) and **existing error-response helpers** (error
+  middleware, exception filters, `res.status(…).json({ error })` helpers).
+
+Show the user the list before proceeding, e.g.:
 
 > Found: `apps/api` (Node/Express, calls OpenAI, probe `/healthz`),
 > `apps/web` (Next.js 15, built on Vercel), `worker/` (Python/Celery). I'll
@@ -147,8 +156,8 @@ style skill **before editing anything**:
 | Detected stack | Style skill |
 | --- | --- |
 | Node.js: Express, Fastify, Koa, NestJS, plain `http` | `otel-node-style` |
-| Next.js (any router) | `otel-node-style` (has a dedicated Next.js section) |
-| Cloudflare Workers, Vercel Edge, Deno, Bun | `otel-node-style` (Edge runtimes section, `@autter/runtime-edge`) |
+| Next.js (any router) | `otel-node-style` (has a dedicated Next.js section); `middleware.ts` and `runtime = "edge"` routes also `otel-edge-style` |
+| Cloudflare Workers, Vercel Edge, Deno, Bun | `otel-edge-style` (`@autter/runtime-edge`; `otel-node-style`'s Edge runtimes section is the short version) |
 | Browser: React/Vue/Svelte/Angular/vanilla SPA, static site | `otel-browser-style` (plus its source maps reference when there is a build step) |
 | Python: Django, FastAPI, Flask, Celery workers, plain WSGI/ASGI | `otel-python-style` |
 | Go or Rust (any framework) | `otel-go-rust-style` |
@@ -213,8 +222,9 @@ for other backends follow their OTLP logs section and the
   and frontend need the matching operation-evidence deployment. Order rollout:
   ingester, SDK release/application redeploy, then platform consumers.
 - Initialize once before application startup. Next.js logging uses
-  `@autter/runtime-next/server` in the Node runtime; browser/edge apps keep
-  their existing lightweight capture APIs.
+  `@autter/runtime-next/server` in the Node runtime; browser apps keep their
+  lightweight capture APIs, and edge code uses `@autter/runtime-edge` /
+  `@autter/runtime-next/edge` (`otel-edge-style`).
 - Wrap meaningful customer operations (checkout, queue job, scheduled work)
   with stable names, measured steps and bounded nested context. Convert a
   matching `withProcessSpan` wrapper rather than nesting duplicate boundaries.
@@ -228,9 +238,10 @@ for other backends follow their OTLP logs section and the
 - Preserve existing loggers and providers. Choose stdout behavior through
   `logging.console`; `logging.minLevel` filters messages, not summaries.
   Runtime does not automatically forward all Pino/Winston records.
-- Context/trace IDs are local to the operation; pass safe workflow IDs through
-  queue payloads explicitly. Similar timestamps or custom workflow IDs alone
-  do not establish an operation-evidence link.
+- Context/trace IDs are local to the operation. On 1.5.0+, propagate the
+  `runtimeContext.carrier()` through queue payloads to link jobs; on 1.4.x,
+  pass safe workflow IDs explicitly. Similar timestamps or custom workflow IDs
+  alone do not establish an operation-evidence link.
 - Await logs and the existing trace/metric flush at the end of short-lived
   invocations, and shutdown after draining long-running services. Report
   delivery failures and buffered/dropped records. Telemetry is best effort.
@@ -266,6 +277,54 @@ it as part of setup without waiting to be asked:
 - Frontends: `@autter/runtime-browser` 1.4.0+ records the `x-request-id` on
   failed fetch/XHR calls, which links a browser error to its server request.
   The Node middleware exposes the header to CORS automatically.
+
+### Coded errors and evidence
+
+Coded errors make Autter's root-cause analysis concrete: one issue per error
+code, the failing request's route, status, steps, context and inline
+messages, compared against healthy requests.
+
+| Component | Required version |
+| --- | --- |
+| `@autter/runtime-node`, `@autter/runtime-next` | **1.5.0+** |
+| `@autter/runtime-edge` | **1.0.0+** |
+| `@autter/runtime-browser` (codes, request-id correlation) | **1.4.0+** |
+| Self-hosted otlp-ingester | **1.5.0+** (migrations `0012`, `0013`, `0014`) |
+| Python/Go/Rust/other | attribute contract in the style skill + 1.5.0+ ingester |
+
+Check the **installed** package exports (each style skill has the command), not
+`latest`, a dependency range or the SDK repo's source. **Rollout order:**
+ingester 1.5.0 → SDKs (node/next 1.5.0, edge 1.0.0, browser 1.4.0) and
+application redeploys → platform (backend/frontend/fix worker). A newer SDK
+against an older ingester loses codes and request columns silently; report
+such services as pending.
+
+- **Adopt catalogs where errors are user-facing** (API error responses, UI
+  messages) and for the top recurring issues. Use `autterErrorResponse()` /
+  `toClientError` so responses carry `code` and `requestId`, keeping existing
+  response shapes (with the user's go-ahead, as above). Existing error classes
+  with a `code` work as-is (duck-typed); add `code/why/fix` without rewriting
+  messages.
+- **Code rules:** `^[a-z][a-z0-9_]*(\.[a-z0-9_]+){0,3}$`, ≤ 80 chars,
+  namespaced by domain (`billing.declined`), stable across releases,
+  low-cardinality, and never containing ids, PII, tenant names or secrets.
+  One code = one issue per service, across SDK and connected providers.
+- **`expected: true`** for business failures (declines, validation, plan
+  limits): recorded and counted, never an incident or auto-fix. Defects and
+  dependency failures stay `false`.
+- **Queues:** put `runtimeContext.carrier()` in job payloads and start
+  consumers with `withRuntimeOperation(name, fn, ctx, { from })`, so jobs link
+  to the request that enqueued them.
+- **Declared ≠ proven:** `why`/`fix` are shown as "declared by the
+  application"; analysis treats them as hypotheses.
+- **Local files:** in development (`NODE_ENV=development`) the Node SDK writes
+  `.autter/runtime/*.jsonl`. Add `.autter/` to the repo's `.gitignore` while
+  wiring, as the Runtime repository does; never commit those files.
+- **Own OTel SDK already running:** use `initAutterLogging` (logger-only mode)
+  instead of a second SDK. There, a declared failed outcome without an
+  exception is only an error log, not an issue; see `otel-node-style`.
+- Offer the `autter-runtime-errors` skill for a full coverage audit and catalog
+  proposal, and `autter-runtime-logs` for local debugging.
 
 ### Who hit it, and an ID they can quote (default when the app has signed-in users)
 
@@ -582,6 +641,12 @@ confirm **every applicable signal** per the style skill's Verify steps:
 8. **Trace links** (when propagation is enabled): a browser request to the
    error route carries a `traceparent`; its `request_failure` event carries
    the same trace id and links to the server trace and error.
+9. **Coded errors** (1.5.0+ SDK/edge/browser and ingester):
+   - two different messages with one code (`autter_selftest.failed`) produce
+     **one** issue with two occurrences;
+   - the issue shows the declared why/fix, labelled as declared;
+   - an `expected` coded error is stored and counted but opens **no** incident.
+   If the ingester or SDK is older, report these as pending, not failed.
 
 Two things the style skills handle that you shouldn't improvise around:
 
@@ -654,8 +719,10 @@ Rules for the edit:
   `ClientErrorResponses`, and `trace.get_current_span().record_exception(exc,
   attributes={"autter.handled": True})` for handled exceptions).
   Drop logging/operation/request/server-error/source-map lines if capability is
-  pending, and LLM/browser/breadcrumb/trace lines when they don't apply. Do not
-  record uninstalled APIs as repo conventions.
+  pending, code/background lines unless 1.5.0 APIs are installed (raw OTel
+  stacks: name their summary middleware and the `autter.error.*` attributes
+  instead), and LLM/browser/breadcrumb/trace lines when they don't apply. Do
+  not record uninstalled APIs as repo conventions.
 
 Block to write (adjust the function names to the stack you wired):
 
@@ -685,7 +752,17 @@ When you write or change code here:
   `withRuntimeRequest` around each new Next.js route handler). Add new probe or
   metrics endpoints to its `ignore` list. Attach request context with
   `runtimeContext.set(...)`, not by logging it separately. The signed-in
-  user's opaque id goes on as `enduser.id`, never an email or a name.
+  user's opaque id goes on as `enduser.id`, never an email or a name. Add
+  messages with `runtimeContext.info/warn` and business results with
+  `runtimeContext.outcome(...)`; quote `runtimeContext.requestId` in
+  support-facing messages.
+- **Error codes:** user-facing failures throw catalog errors from
+  `defineRuntimeErrors("<domain>", {...})` (or `RuntimeError`). Codes are
+  namespaced, stable, lowercase (`billing.declined`). Mark business failures
+  `expected: true`. Error responses go through `autterErrorResponse()` /
+  `toClientError` and include the `requestId`.
+- **Background work:** use `runtimeContext.fork` / `runInBackground` for side
+  work, and pass `runtimeContext.carrier()` in queue payloads.
 - **Server errors:** keep the framework error hook in place
   (`autterErrorHandler` after the routes and before the app's own error
   handlers; `autterFastifyErrors` or `autterFastify`; `autterKoa`;
@@ -726,7 +803,7 @@ When you write or change code here:
 - **Keys & privacy:** the ingest key is referenced only by env var
   (`AUTTER_RUNTIME_KEY`), never inlined. Never put prompts, completions, PII, or
   secrets in span attributes or message context — ids, counts, and model names
-  only.
+  only. Never put ids, PII or secrets in error codes, `why` or `fix`.
 
 Setup and verification live in the `autter-runtime-setup` skill; follow the
 matching `otel-*-style` skill for exact APIs.
@@ -746,6 +823,8 @@ Tell the user, concisely:
   paths are ignored, and what is not covered (Pages Router API routes, server
   actions, Koa or non-Node services without a request middleware). Name the
   Requests view as pending when the ingester or SDK is older than 1.5.0.
+- Which services throw coded errors, which catalogs were added, and which are
+  pending an SDK or ingester upgrade.
 - Which services got server error hooks and through which hook, which
   Next.js apps got `onRequestError` and `serverExternalPackages`, and what is
   not covered (Next 14, edge route handlers outside `next start`, frameworks
@@ -847,3 +926,11 @@ Tell the user, concisely:
   or an explicit `RecordUnsampled`/`RetainErrorTraces` wiring). Don't raise
   the sample rate without the user asking; high sampling on a busy service
   generates real cost.
+- Never invent error codes for third-party errors (vendor SDK, database,
+  framework); wrap them in your own coded error with `cause`, or leave them
+  uncoded.
+- Never rewrite existing user-facing error messages while adding codes; add
+  `code`/`why`/`fix` alongside them.
+- Never put ids, PII, tenant names or secrets in error codes, `why` or `fix`.
+- Never claim request summaries or code grouping work from a package version
+  string; verify installed exports and stored records.

@@ -1,8 +1,8 @@
 ---
 name: otel-node-style
-description: Wire Autter Runtime into Node.js, Next.js and edge runtimes using the official packages. Check installed support, keep server error stacks, add Next.js onRequestError, mount request summaries, configure operations and logs, and verify errors, usage, requests, and LLM tracing.
+description: Wire Autter Runtime into Node.js, Next.js and edge runtimes using the official packages. Check installed support, keep server error stacks, add Next.js onRequestError, mount request summaries, add coded errors and operations, configure logs, and verify errors, usage, requests, and LLM tracing.
 metadata:
-  version: "1.5.0"
+  version: "1.6.0"
   tags: [autter, telemetry, nodejs, nextjs, express, fastify, koa, edge, opentelemetry, llm, logging, requests, errors, breadcrumbs]
   author: autter
 ---
@@ -26,10 +26,17 @@ HTTP service. Mounting the request boundary (`autterRequests`,
 SDK and ingester **1.5.0+**.
 
 Read [Operation logging setup](references/operation-logging.md) before wiring
-diagnostic logs or business operations. It covers release/deployment checks,
-nested context, explicit outcomes, existing loggers, flush and stored evidence.
-The APIs require SDK and ingester **1.4.0+**; neither `latest` nor a package
-version in the source establishes that they are published or deployed.
+diagnostic logs, operations or request summaries, and
+[Error catalogs and codes](references/error-catalog.md) before adding codes.
+
+| Feature | Needs |
+| --- | --- |
+| Errors, usage, LLM tracing, `withProcessSpan` | runtime-node/next 1.3.2+ |
+| `runtimeLogger`, `withRuntimeOperation` | runtime-node/next **1.4.0+**, ingester 1.4.0+ |
+| Request summaries, `runtimeContext`, coded errors, `fork`/carrier, sinks, `/testing`, `initAutterLogging` | runtime-node/next **1.5.0+**, ingester **1.5.0+** |
+
+Neither `latest` nor a package version in the source establishes that a
+feature is published, installed or deployed. Run the capability check below.
 
 For continuous detection, configure HTTP client, database, and queue
 instrumentations alongside the server tracker. HTTP 5xx and ERROR spans
@@ -57,6 +64,35 @@ rolling raw OTel SDK setup.
 The ingest key stays in the user's environment: always reference
 `process.env.AUTTER_RUNTIME_KEY` by name, never ask for the key's value
 and never hardcode it.
+
+## Check installed capabilities first
+
+Install `@autter/runtime-node@^1.5.0` (or `@autter/runtime-next@^1.5.0`) with
+the project's package manager, update the lockfile, then check what is
+**installed**, from the service's directory:
+
+```bash
+npm ls @autter/runtime-node @autter/runtime-next
+node -p 'require("@autter/runtime-node/package.json").version'   # 1.5.0+ exposes package.json
+node -e 'const m=require("@autter/runtime-node");const need=["autterRequests","autterFastify","withRuntimeRequest","runtimeContext","runInBackground","RuntimeError","defineRuntimeErrors","toClientError","autterErrorResponse","initAutterLogging"];const miss=need.filter(k=>!(k in m));console.log(miss.length?"missing: "+miss.join(", "):"1.5.0 APIs present")'
+node -e 'require("@autter/runtime-node/testing");console.log("testing subpath present")'
+```
+
+For Next.js, run the same export check against
+`require("@autter/runtime-next/server")` (its `withRuntimeRequest` is the Next
+variant that wires `after()`) and confirm `@autter/runtime-next/edge` exports
+`withAutter`. In
+`/server`, the 1.4.0 capture functions keep their Next names
+(`captureServerException`, `captureServerMessage`, `reportServerOutcome`); the
+1.5.0 APIs (`runtimeContext`, `autterRequests`, `defineRuntimeErrors`,
+`toClientError`, `initAutterLogging`, sinks, enrichers, …) keep their
+runtime-node names. `/testing` is imported from `@autter/runtime-node/testing`
+(a dependency of runtime-next). If 1.5.0 cannot be installed
+or exports are missing, use only the 1.4.0 APIs, leave request/code lines out
+of the repo conventions, and report those features as **pending**. Also
+check the ingester: self-hosted needs **1.5.0+** (migrations `0012`, `0013`);
+on an older ingester request columns and code grouping are missing even though
+the SDK sends them.
 
 ## Plain Node (Express, Fastify, Koa, NestJS, http)
 
@@ -178,9 +214,49 @@ only calls `captureException(err)` and `next(err)` can be replaced by
 [server errors reference](references/server-errors.md) for placement edge
 cases, NestJS, unhandled rejections, Next.js and edge.
 
+### App already runs its own OpenTelemetry SDK: logger-only mode
+
+If the process already starts a `NodeSDK`/tracer provider (check for
+`@opentelemetry/sdk-node`, `sdk-trace-node`, Sentry/Datadog OTel setups), do
+**not** add `initAutterServer`: two SDKs fight over global providers. Use
+logger-only mode (1.5.0+) instead:
+
+```js
+const { initAutterLogging } = require("@autter/runtime-node");
+initAutterLogging({
+  apiKey: process.env.AUTTER_RUNTIME_KEY,   // omit → console/file sinks only
+  service: "<service name>",
+  release: process.env.GIT_SHA,
+  exceptions: "auto",                       // or "log", see below
+  logging: { console: false },
+});
+```
+
+It provides request summaries, operations, `runtimeContext`, coded errors,
+sinks and enrichers; it never starts a NodeSDK (only `@opentelemetry/api` is
+read). Never call both `initAutterServer` and `initAutterLogging`.
+
+- `exceptions: "auto"` (default): `captureException`, errors thrown out of
+  operations and crashes are recorded on the app's **active recording span**
+  when there is one; otherwise they become error records (`exception.*`,
+  `autter.error.*`, `autter.capture.mode=log`) that a **1.5.0+ ingester**
+  promotes to issues (deduplicated by trace id).
+- `exceptions: "log"`: always emit those records. Use it when the app's own
+  spans are **not** exported to Autter, or exceptions recorded on them would
+  never reach an issue.
+- Limitation: a declared failed outcome **without** an exception
+  (`operation.outcome("failed", …)`, `reportOutcome`) is only an error log
+  record in this mode and does **not** become an issue. Throw or
+  `captureException` where a failure must open an issue.
+- Traces and request metrics still come from the app's own SDK: point its
+  exporters at Autter per `otel-generic-style` only if the user wants them
+  there.
+
 ### Capturing handled exceptions
 
-Report errors the code catches and handles itself:
+Report errors the code catches and handles itself. `captureException` reads
+`code`, `why`, `fix`, `link`, `status` and `expected` from **any** error
+object (1.5.0+), so existing error classes need no rewrite:
 
 ```js
 const { captureException } = require("@autter/runtime-node");
@@ -225,6 +301,155 @@ These records appear in **Runtime → Logs**, separately from issues.
 that intentionally need severity-tagged issue grouping. Prefer stable
 messages and bounded, non-sensitive context. If the logging release is
 unavailable, keep existing capture APIs working and report diagnostics as pending.
+
+### Request context and outcomes (1.5.0+)
+
+Inside the request boundary (above), each request's summary
+(`autter.operation.kind=request`) carries method, route template, status,
+duration, request id, context, steps and inline messages. Summaries are
+**always kept** (no sampling), so use `ignore` only for health and metrics
+routes, never to cut volume on real traffic. Koa and plain `http` have no
+middleware: wrap handlers in `withRuntimeOperation` or `withRuntimeRequest`.
+`logging: { requests: true }` (hook mode) is **experimental** and off by
+default because its `AsyncLocalStorage.enterWith` can leak context across
+keep-alive requests; do not enable it unless the user accepts that.
+
+```js
+const { autterRequests, runtimeContext } = require("@autter/runtime-node");
+
+// Options (also for autterFastify): ignore (globs: * one segment, ** any depth),
+// requestIdHeader (default "x-request-id"), trustRequestId (default true).
+app.use(autterRequests({ ignore: ["/healthz", "/metrics"] }));
+
+app.post("/checkout", async (req, res) => {
+  runtimeContext.set({ cart: { items: req.body.items.length } }); // no PII
+  runtimeContext.info("Applied coupon", { coupon: req.body.coupon });
+  // …
+  if (usedCache) runtimeContext.outcome("degraded", "Used cached prices");
+  res.json({ ok: true });
+});
+```
+
+- The request id honours an incoming `x-request-id` (`^[\w.-]{8,128}$`) or is
+  generated, and is echoed in the response. Cross-origin browsers can read it
+  only when the API sends `Access-Control-Expose-Headers: x-request-id`; the
+  middleware adds it when CORS headers are present. Check it on real responses.
+- Use `runtimeContext.requestId` in support emails, error pages and tickets.
+- Existing `withRuntimeOperation` calls inside a request become children.
+  Convert duplicate wrappers that only existed to label a route.
+- Put auth/tenant facts on the context once, in the auth middleware, with
+  flat keys and opaque ids only (`runtimeContext.set({ "enduser.id":
+  String(user.id) })`, as above).
+- Outside a request or operation, `runtimeContext.set`/`outcome` are no-ops
+  and its log methods behave like `runtimeLogger`.
+- Outcome: explicit `outcome()` wins; else an `expected` coded error →
+  `degraded`, a thrown error or status ≥ 500 → `failed`, aborted → `cancelled`.
+- Fetch wrappers name the summary from `name`/`route`, else the pathname with
+  id-like segments replaced by `:id`.
+
+### Structured errors and codes (1.5.0+)
+
+Follow [Error catalogs and codes](references/error-catalog.md). In short:
+
+```js
+const { defineRuntimeErrors, autterErrorResponse } = require("@autter/runtime-node");
+
+const billingErrors = defineRuntimeErrors("billing", {
+  declined: { status: 402, message: "Payment declined", expected: true,
+              why: "The card issuer rejected the charge", fix: "Use another card" },
+});
+throw billingErrors.declined();     // code "billing.declined", one issue per code
+
+app.use(autterErrorResponse());     // last; status from err.status, else 500 (ask first: it changes error bodies)
+```
+
+`autterErrorResponse()` answers `{ error: { message, code?, why?, fix?, link?,
+requestId? } }`, records the error on the request summary, and by default
+reports 5xx errors, `RuntimeError`s and validly coded errors through
+`captureException` exactly once (`capture: false` or a predicate changes
+that). Messages of undeclared errors (plain `Error`, uncoded 5xx) become
+`"Internal Server Error"`; coded and 4xx errors keep theirs.
+
+- Adopt catalogs where errors reach users (API responses, UI messages) and
+  for the top recurring issues. Do not convert every `throw`.
+- Migrating an existing `AppError`/`HttpError`: keep the class and its
+  **message text unchanged**; add `code`/`why`/`fix` (and `expected` for
+  business failures). See the reference for the recipe.
+- Codes are namespaced, stable, low-cardinality and never contain ids, PII or
+  secrets. Never invent codes for third-party errors.
+- Keep exactly one capture per error at each boundary: drop the app's own
+  `captureException` in a handler that `autterErrorResponse` replaces.
+
+### Background work and queues (1.5.0+)
+
+- Awaited side work inside a request: `await runtimeContext.fork("pdf.render", fn)`.
+- Fire-and-forget: `runInBackground("cache.warm", fn)`; it is not awaited and
+  captures its own errors. Do not use bare `void promise` for work that can fail.
+- Queues: put `runtimeContext.carrier()` in the job payload (`autter` field) and
+  start the consumer with `withRuntimeOperation(name, fn, context, { from: job.data.autter })`.
+  The carrier holds ids only; never add secrets to it.
+- Serverless: pass `waitUntil` (`withRuntimeRequest(h, { waitUntil })`, 4th
+  argument of `withRuntimeOperation`); Next.js wires `after()` automatically.
+
+Details and limits: [Operation logging setup](references/operation-logging.md).
+
+### Local runtime files (1.5.0+)
+
+When `NODE_ENV=development` (only then, unless `logging.file: true | {…}`),
+the SDK also writes NDJSON to `.autter/runtime/YYYY-MM-DD.jsonl` (UTC days,
+`.N.jsonl` past 10 MiB, 7 files kept; one warning and off on read-only or
+permission-denied filesystems). The `autter-runtime-logs` skill reads them.
+Add this to `.gitignore` while wiring (the Runtime repo itself does the same):
+
+```gitignore
+.autter/
+```
+
+Never commit these files or copy them into issues; they are redacted but can
+still contain request context. `logging.sinks` **replaces** the default
+`[otlpSink(), consoleSink()]` list, so include all you need:
+
+```js
+const { otlpSink, consoleSink, fileSink } = require("@autter/runtime-node");
+initAutterServer({ /* … */ logging: {
+  sinks: [otlpSink(), consoleSink({ format: "pretty" }), fileSink({ dir: ".autter/runtime" })],
+} });
+```
+
+Keep the default sinks unless the user asks; do not enable `fileSink` in
+production containers.
+
+### Testing (1.5.0+)
+
+Assert telemetry in the app's existing test runner instead of reading console
+output:
+
+```js
+const { captureRuntime, expectOperation } = require("@autter/runtime-node/testing");
+
+const runtime = captureRuntime();          // in memory; no ingester, no network
+await request(app).post("/checkout").set("x-request-id", "test-req-0001").expect(402);
+expectOperation(runtime, "POST /checkout")  // latest summary with that name (string or RegExp)
+  .toHaveKind("request")
+  .toHaveOutcome("degraded")
+  .toHaveErrorCode("billing.declined")
+  .toHaveRequestId("test-req-0001")
+  .toHaveContext({ cart: { items: 3 } })
+  .toHaveStep("charge", "failed")
+  .toHaveLog("Applied coupon");
+runtime.byRequestId("test-req-0001"); // every record of that request
+runtime.exceptions;                   // every captureException call
+runtime.clear();                      // between tests
+runtime.stop();                       // detach (afterAll)
+```
+
+`captureRuntime()` exposes `events`, `operations`, `logs`, `exceptions`,
+`byRequestId`, `clear` and `stop`; `expectOperation` throws an
+`AssertionError` (listing the names it saw) when no summary matches. It works
+with or without `initAutterServer` (before init it replaces console output).
+`memorySink()` is exported too for a custom `logging.sinks` list. Add a test
+only where the repo already has a matching test file pattern; do not
+introduce a new test framework.
 
 ### Instrumenting slow processes (jobs, consumers, crons)
 
@@ -494,6 +719,22 @@ export function Providers({ children }: { children: React.ReactNode }) {
 }
 ```
 
+**Route handlers (1.5.0+):** wrap each handler with `withRuntimeRequest`
+from `@autter/runtime-next/server` (Node runtime only). `after()` is wired for
+you; coded errors and `toClientError` come from the same import.
+
+```ts
+import { withRuntimeRequest, runtimeContext } from "@autter/runtime-next/server";
+export const runtime = "nodejs";
+export const POST = withRuntimeRequest(async (request: Request) => {
+  runtimeContext.set({ plan: { tier: "pro" } });
+  return Response.json({ ok: true });
+}, { name: "POST /api/checkout" });
+```
+
+`middleware.ts` and `runtime = "edge"` routes cannot use these Node APIs; use
+`@autter/runtime-next/edge` per `otel-edge-style`.
+
 Mount `<AutterErrorBoundary>` near the root layout so it catches render
 errors app-wide — `window.onerror` does **not** fire for React render
 errors, so skipping this boundary silently misses them.
@@ -522,6 +763,9 @@ uncovered in the hand-off. `middleware.ts` runs on the edge: wrap it with
 `withAutter` from `@autter/runtime-next/edge` (see Edge runtimes below).
 
 ## Edge runtimes (Cloudflare Workers, Vercel Edge, Deno, Bun)
+
+The short version; `otel-edge-style` has the full setup (key binding, coded
+errors and responses, privacy limits, selftest).
 
 ```bash
 npm install @autter/runtime-edge@^1.1.0
@@ -592,9 +836,10 @@ behavior; see the [server errors reference](references/server-errors.md).
 
 Use this path only in a local or isolated test environment. Do not generate artificial production errors or traffic. Inspect existing production telemetry instead.
 
-To verify traces/errors, metrics, and supported operation logs, add a
-throwaway route, hit it once, then delete it. Never commit or deploy it;
-it's an unauthenticated endpoint that triggers telemetry sends.
+To verify traces/errors, metrics, supported operation logs, request summaries
+and coded errors, add throwaway routes, hit them, then delete them. Never
+commit or deploy them; they are unauthenticated endpoints that trigger
+telemetry sends.
 
 Register it after `autterRequests` (or inside the Fastify app that registered
 `autterFastify`) so the selftest request itself produces a request summary.
@@ -701,6 +946,34 @@ Next.js: a temporary route handler that throws the same error, wrapped in
 `withRuntimeRequest`. If 1.6.0 is pending, skip this route and report the
 error hooks as pending.
 
+When the 1.5.0 APIs are installed, add a third temporary route next to it to
+verify code grouping; otherwise skip it and report codes as pending:
+
+```js
+const { RuntimeError } = require("@autter/runtime-node");
+
+// TEMPORARY autter selftest — delete after verification.
+app.get("/__autter-selftest/coded", (req) => {
+  const variant = String(req.query.variant ?? "alpha");
+  if (variant === "expected")
+    throw new RuntimeError({ code: "autter_selftest.declined", status: 402,
+      message: "autter selftest declined", expected: true });
+  throw new RuntimeError({ code: "autter_selftest.failed", status: 500,
+    message: `autter selftest failure ${variant}`,
+    why: "Selftest declared cause", fix: "Delete the selftest route" });
+});
+```
+
+```bash
+curl -s 'localhost:3000/__autter-selftest/coded?variant=alpha'
+curl -s 'localhost:3000/__autter-selftest/coded?variant=beta'
+curl -s 'localhost:3000/__autter-selftest/coded?variant=expected'
+```
+
+- `alpha` + `beta`: two messages, one code → **one** issue
+  `autter_selftest.failed`, showing the declared why/fix;
+- `expected`: a stored occurrence and a `degraded` summary, and **no** incident.
+
 ## Verify
 
 1. Start the app with the instrumentation loaded and
@@ -746,12 +1019,18 @@ error hooks as pending.
    `runtimeLogger` entry. Next.js: the error also carries `next.route_path`.
    Errors reported twice or request summaries printed to the console mean
    `serverExternalPackages` is missing.
-7. LLM-wired services: the selftest response's `llmTraceId` call shows up
+7. `curl` the coded route's three variants. **Runtime → Errors** shows one
+   `autter_selftest.failed` issue (code chip, "Declared by the application"
+   why/fix) with two occurrences, and an `autter_selftest.declined` issue
+   marked expected with no incident. Missing codes with stored traces
+   usually means a pre-1.5.0 ingester: report codes as pending.
+8. LLM-wired services: the selftest response's `llmTraceId` call shows up
    under **Runtime → LLM** as provider/model `autter-selftest` (self-hosted:
    a `runtime_llm_calls` row with that `trace_id`). Traces arriving without
    the LLM call means the ingester predates LLM support — have the user
    update it. Then, if a real (cheap) model call is easy to trigger,
    exercise one and confirm it lands with real token counts and a cost —
    the selftest proves transport, not that every call site got wrapped.
-8. **Delete both selftest routes** (and unset `OTEL_LOG_LEVEL`) once all
-   signals are confirmed.
+9. **Delete all three selftest routes** (and unset `OTEL_LOG_LEVEL`) once all
+   signals are confirmed. The selftest issues are clearly named; tell the user
+   they can resolve them.
