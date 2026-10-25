@@ -20,7 +20,7 @@ Use this workflow when connecting existing provider logs instead of, or alongsid
 - Delivery: a unique occurrence appears in the correct repository with the original severity, message and available diagnostics. Duplicate retries must not inflate counts. Webhook `202` confirms committed ingestion on this new connector route; it does not mean RCA or a PR is complete. Polling is periodic (normally 60 seconds) plus provider indexing delay.
 - Evidence: check retained stacks/source-map availability, release and trace context. A trace ID or metric alert alone does not justify a code fix. Provider logs supplement available evidence; they do not automatically supply full application traces.
 - Analysis: inspect the persisted root cause, fix plan and source files or the explicit low-value/needs-evidence result. Do not manufacture production provenance for a replay or local reproduction.
-- Fix: check repository autofix is enabled, the connection is active/in autofix mode, severity/environment are eligible and budget is available. Report queued/running/failed separately. Claim a created fix only after checking a real PR URL and draft state.
+- Fix: check repository autofix is enabled, the connection is active/in autofix mode, severity/environment are eligible and budget is available. Report queued/running/failed separately. Claim a created fix only after checking a real PR URL and its state: draft, or merged when the repository auto-merges verified fixes.
 - An authorized bounded test may use an existing defect reproduced locally. Label it verification traffic, avoid deliberately breaking production, and clean up temporary connectors/secrets while retaining the diagnostic result.
 
 ## Operational boundaries

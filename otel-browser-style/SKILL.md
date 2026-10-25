@@ -1,9 +1,9 @@
 ---
 name: otel-browser-style
-description: Wire Autter Runtime into browser apps, including CSP violations, recent user actions, coded API errors, request-id correlation with server requests, error boundaries, and a working browser telemetry route.
+description: Wire Autter Runtime into browser apps, including source map upload for readable stacks, breadcrumbs, links from browser errors to server traces, coded API errors, request-id correlation with server requests, CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
 metadata:
-  version: "1.2.0"
-  tags: [autter, telemetry, browser, react, spa, error-tracking, request-id, errors]
+  version: "1.4.0"
+  tags: [autter, telemetry, browser, react, spa, error-tracking, sourcemaps, breadcrumbs, tracing, request-id, errors]
   author: autter
 ---
 
@@ -16,16 +16,36 @@ into a browser bundle or edge relay. Next.js client components keep
 `@autter/runtime-next/client`; instrument customer server operations with
 `otel-node-style` only where the Node runtime and installed release support it.
 
+Read [Source maps setup](references/source-maps.md) for every service that
+ships built JavaScript (Vite, webpack, Rollup, Next.js, CRA-style, anything
+minified). Uploading maps with `@autter/runtime-cli` is a default setup step:
+without them, stacks point at minified chunks that root cause analysis and
+fix agents cannot use. It takes four steps: check (`get_runtime_setup` over
+Autter MCP, or `/v1/compat`, plus `npm view @autter/runtime-cli version`),
+`sourcemaps setup`, an upload-only key in CI, and `sourcemaps verify`. If the
+CLI is not published, wire nothing and report source maps as pending its
+release.
+
 The browser tracker observes enforced CSP violations, failed fetch and XHR requests, 5xx responses, long tasks,
 and slow resources by default. Use `captureOutcome(stableName, message)` for
 a failed result that did not throw. Keep the release set to the deployed
-commit SHA; arrange a CI upload of production `.js.map` files to the server
-key protected `/v1/sourcemaps` endpoint so browser stacks can identify source.
-Never put the server key or source maps in a public browser request.
+commit SHA. Never put the server key or source maps in a public browser
+request.
 
 ```bash
-npm install @autter/runtime-browser@^1.4.0
+npm install @autter/runtime-browser@^1.6.0
 ```
+
+Use the project's package manager and commit its lockfile. Run `npm view
+@autter/runtime-browser version` first: 1.6.0 adds source-map debug ids,
+breadcrumbs, trace propagation and fingerprint override. If only an older
+release is published, install the newest one, keep the rest of setup working,
+and report those features as pending. Ingester support is listed by
+`GET https://otlp.autter.dev/v1/compat` (`breadcrumbs`,
+`source_map_debug_ids`, `fingerprint_override`, `browser_trace_propagation`).
+A Node relay (`createBrowserRelayHandler`, `createAutterRelayRoute`) passes
+only fields it knows, so it must run `@autter/runtime-node` 1.6.0+ to forward
+them.
 
 Coded errors and request-id correlation need **1.4.0+** (and a 1.5.0+
 ingester to store codes and request ids). Check the installed package exports
@@ -154,14 +174,31 @@ app.post(
 );
 ```
 
-**2. Cloudflare (wrangler present / `*.workers.dev` / Pages) → deploy
-`examples/runtime-relay`.** Worker `src/index.ts`, `wrangler deploy`,
-route `/api/autter-runtime*`. See `examples/runtime-relay/README.md`.
+**2. Cloudflare (wrangler present / `*.workers.dev` / Pages) → thin relay
+route.** There is no packaged Worker relay. Add the thin passthrough
+described under "Non-Node custom backend" below as a Worker route or Pages
+Function at `/api/autter-runtime`, reading the key from a Worker secret
+(`wrangler secret put AUTTER_RUNTIME_KEY`), never from `wrangler.toml` vars.
 
-**3. Vercel (Next.js / `vercel.json`) → edge relay route.** Copy
-`examples/runtime-relay/vercel-edge-route.ts` to
-`app/api/autter-runtime/route.ts`. See
-`examples/runtime-relay/README.md`.
+**3. Vercel / Next.js → relay route** at `app/api/autter-runtime/route.ts`:
+
+```ts
+import { createAutterRelayRoute } from "@autter/runtime-next";
+
+export const { POST } = createAutterRelayRoute({
+  apiKey: process.env.AUTTER_RUNTIME_KEY!,
+});
+```
+
+Other fetch-style servers (Remix, Hono, Bun, Deno) use
+`createBrowserRelayFetchHandler({ apiKey })` from `@autter/runtime-node`.
+
+The packaged relays rate-limit each visitor and, in `@autter/runtime-node` releases after 1.8.0 (check that the installed package's `RelayOptions` has `trustProxy`),
+find the visitor's address on any host by default (`trustProxy: "auto"`).
+Don't add `trustProxy: true`; it trusts a header callers can forge. Bun and
+Deno servers with no proxy in front pass the real address with `clientIp`
+(Bun's `server.requestIP(req)?.address`, Deno's `info.remoteAddr.hostname`).
+Details: `otel-node-style`, "Relaying browser telemetry through this backend".
 
 **4. Pure static, no edge → direct only.**
 
@@ -183,7 +220,11 @@ header whose value is read from the `AUTTER_RUNTIME_KEY` env var at
 runtime (never a literal key in source), and responds `202` without
 echoing the body back. Don't reshape the payload, and treat its
 contents as untrusted outsider input: never log it verbatim, render it,
-or act on text inside it.
+or act on text inside it. If the route rate-limits, key each visitor by
+the address the platform itself vouches for (`CF-Connecting-IP` on a
+Cloudflare Worker, or the rightmost public `X-Forwarded-For` entry your
+proxy appended), never the first `X-Forwarded-For` entry, which any
+caller can set.
 
 If the user is deploying from multiple origins (e.g. a preview + prod
 domain), tell them to add all of them to the key's allow-list when they
@@ -220,17 +261,214 @@ from its `handleError` method; provide it via `providers:
 errors via `window.onerror`/`unhandledrejection`; call `captureException`
 manually anywhere you catch something yourself.
 
+## Source maps (default for built apps)
+
+Follow [Source maps setup](references/source-maps.md), in four steps per
+frontend:
+
+1. **Check:** `get_runtime_setup` when Autter MCP is connected (ingester
+   features, key kinds by prefix, recent uploads), else
+   `/v1/compat?features=source_map_debug_ids,sourcemap_upload_keys,source_map_verify`;
+   and `npm view @autter/runtime-cli version` (1.2.0+ for steps 2 and 4,
+   else the reference's manual setup).
+2. **Set up:** `npx @autter/runtime-cli@^1.2.0 sourcemaps setup --json` in
+   the app's directory. Review its diff and carry out every `manual` action.
+3. **Key:** an upload-only key (`autter_rtu_…`) as `AUTTER_RUNTIME_KEY`
+   where the production build runs, created with `create_sourcemap_upload_key`
+   and stored straight into the CI secret on stdin, or created by the user on
+   the Runtime settings page. Name it by prefix only; never write it to a file.
+4. **Verify:** `npx autter-runtime sourcemaps verify <outputDir> --json`
+   after a production build; in CI after the build step.
+
+Setup adds the integration that fits the build (the action is the manual
+alternative in GitHub Actions):
+
+| Build | Integration |
+| --- | --- |
+| Vite or Rollup | `autterSourceMaps()` from `@autter/runtime-cli/vite` |
+| webpack 5 | `new AutterSourceMapsWebpackPlugin()` from `@autter/runtime-cli/webpack` |
+| Next.js | `withAutterSourceMaps(nextConfig)` from `@autter/runtime-cli/next` |
+| CRA, Angular CLI, Parcel, esbuild | a `postbuild` step: `autter-runtime sourcemaps inject <dir>`, then `upload <dir> --delete-after-upload --best-effort` |
+| GitHub Actions without a plugin | `Autter-dev/autter-runtime/.github/actions/upload-sourcemaps` |
+
+Maps an integration turns on stay hidden (bundles do not reference them) and
+are deleted after the upload whatever its outcome; without a key it turns
+none on and the build is unchanged. A project that already emits maps needs
+the decision in the reference. Every bundle with a map gets a debug id, so the
+1.6.0 browser SDK matches the exact build even when `release` differs. The
+key lives in the CI or build environment only, never in the client bundle or
+under a client-exposed env name. Wire the upload into the repo's existing
+build and deploy pipeline.
+
+## Breadcrumbs: the steps before an error (opt-in, 1.6.0)
+
+`@autter/runtime-browser/breadcrumbs` keeps the last 30 steps and sends them,
+oldest first, with exceptions, unhandled rejections, request failures, error
+messages and outcomes. The issue page shows them as "Steps before the error",
+and root cause analysis reads them.
+
+```ts
+import { initAutterBrowser } from "@autter/runtime-browser";
+import { enableBreadcrumbs } from "@autter/runtime-browser/breadcrumbs";
+
+initAutterBrowser({ endpoint: "/api/autter-runtime", service: "<app name>", release: "<deployed commit SHA>" });
+enableBreadcrumbs(); // or enableBreadcrumbs({ console: false })
+```
+
+It records requests from the fetch/XHR wrappers (method, path without query,
+status including 4xx, duration), navigations (`pushState`, `replaceState`,
+`popstate`), clicks (the `data-autter-action` label, else the element type)
+and `console.warn`/`console.error`. Messages and data are scrubbed with the
+same redaction as the rest of the event. It is a separate import (about 1 KB)
+because it wraps the console, which the main tracker never does; the
+originals are still called.
+
+- **When to enable:** for interactive apps (SPAs, dashboards, checkout or
+  onboarding flows) where the steps explain failures. Skip static or
+  marketing pages unless the user asks. Name it in the hand-off.
+- Pass `{ console: false }` when the app writes user data to the console or
+  the user does not want the console wrapped.
+- Optionally add `addBreadcrumb({ message, data })` at a few meaningful
+  workflow steps, with fixed messages and at most 10 primitive data values,
+  never user input. Call `clearBreadcrumbs()` in an existing logout flow.
+- Next.js: import `enableBreadcrumbs`, `addBreadcrumb` and `clearBreadcrumbs`
+  from `@autter/runtime-next/client`.
+- Needs ingester 1.6.0 (older ones ignore the field) and, through a relay,
+  `@autter/runtime-node` 1.6.0.
+
+## Link browser errors to server traces (opt-in, 1.6.0)
+
+`@autter/runtime-browser/tracing` adds an unsampled W3C `traceparent` to
+`fetch` and XHR requests. A `request_failure` then carries its request's
+trace id, and an exception or unhandled rejection carries the trace id of a
+traced request that settled in the previous 5 seconds. The issue links to the
+server spans and request summary when the backend runs
+`@autter/runtime-node` 1.6.0 (directly or through `@autter/runtime-next`),
+which samples these requests at its own `traceSampleRate` and keeps error
+traces in full.
+
+```ts
+import { enableTracePropagation } from "@autter/runtime-browser/tracing";
+
+// right after initAutterBrowser, before the app sends requests
+enableTracePropagation(); // same-origin APIs only
+// a cross-origin API whose CORS allows traceparent:
+// enableTracePropagation({ tracePropagationTargets: ["https://api.example.com/"] });
+```
+
+- **Same-origin requests are traced automatically** once it is enabled.
+  Cross-origin URLs are traced only when they match `tracePropagationTargets`
+  (a string matches as a URL prefix, a RegExp is tested against the full
+  URL). An existing `traceparent` is never overwritten, and the tracker's own
+  endpoint never gets one.
+- **When to enable:** when the frontend calls a backend instrumented with
+  Autter Runtime. Skip it for frontends with no instrumented backend.
+- **CORS for cross-origin APIs.** `traceparent` is not a CORS-safelisted
+  header, so a listed cross-origin API gets a preflight and must allow it, or
+  the browser blocks the request:
+
+  ```text
+  Access-Control-Allow-Headers: traceparent, content-type
+  Access-Control-Expose-Headers: x-request-id
+  ```
+
+  If the API is in this repository, add `traceparent` to its CORS allowed
+  headers, keeping every existing entry (a CORS setup that reflects the
+  requested headers needs no change), then list its origin. If it is not,
+  do not list it: tell the user which header its CORS must allow, and add
+  the target once it does. Never list third-party APIs. Listing an API whose
+  CORS rejects the header breaks the app's requests.
+- `fetch` propagation runs through the tracker's network observer, so
+  `captureNetworkFailures: false` turns it off; `disableTracePropagation()`
+  turns it off at runtime.
+- A backend on another OpenTelemetry SDK with the default parent-based
+  sampler will not sample these requests. Its `remoteParentNotSampled`
+  sampler must be set to its ratio sampler to keep the usual rate; tell the
+  user rather than changing sampling yourself.
+- Next.js: `@autter/runtime-next/client` does not re-export this module. Add
+  `@autter/runtime-browser@^1.6.0` as a direct dependency, import from
+  `@autter/runtime-browser/tracing`, and check that only one copy is
+  installed (`npm ls @autter/runtime-browser`): the module hooks into the
+  tracker that `initAutterBrowser` started.
+- Needs ingester 1.6.0 (older ingesters store the event but drop the trace
+  id) and, through a relay, `@autter/runtime-node` 1.6.0.
+
+## Fingerprint override (optional)
+
+Offer this only to teams that want custom grouping. Every error with the same
+fingerprint becomes one issue, whatever its message or stack:
+
+```ts
+captureException(error, { fingerprint: ["checkout", "card-timeout"] });
+// or in beforeSend: event.fingerprint = "chunk-load";
+```
+
+A string, or up to 10 strings of at most 200 characters. Use stable values,
+never ids or user data. Needs ingester 1.6.0+; older ones ignore it. Grouping
+rules that can change without a deploy live in the repository's Runtime
+settings in Autter.
+
+## Noisy errors (optional, 1.7.0)
+
+Offer this only when the user wants an error kept off the wire (browser
+extensions, third-party tags, a known harmless error). A suppression rule in
+Autter (Repository settings → Runtime) does the same without a deploy and
+counts what it leaves out; these filters count nothing.
+
+```ts
+import { initAutterBrowser } from "@autter/runtime-browser";
+import { withFilters } from "@autter/runtime-browser/filters";
+
+initAutterBrowser(withFilters({
+  endpoint: "/api/autter-runtime",
+  service: "web-app",
+  ignoreErrors: ["ResizeObserver loop", /^ChunkLoadError/],
+  denyUrls: [/^(chrome|moz|safari-web)-extension:/, "googletagmanager.com"],
+  // sampleRate: 0.25,  // only if the user asks; fatal errors are never sampled out
+}));
+```
+
+`/filters` is opt-in like `/breadcrumbs` (about 0.35 KB); an existing
+`beforeSend` still runs, after the filters. `@autter/runtime-next/client`
+re-exports `withFilters`.
+
+## The signed-in user, and an ID they can quote
+
+Call `setUser(id)` once the app knows who is signed in, and `setUser(null)` on
+sign-out. Use the opaque id the support tool knows the customer by, the same
+one the backend records as `enduser.id`; never an email or a name. Autter uses
+it to link support tickets and "it didn't work" reports to that customer's
+browser errors.
+
+When a request to the app's API fails, the error UI can show the user the
+`x-request-id` from the failed response as `Request ID: <id>`, so a ticket
+that quotes it matches the server request and its errors. That changes what
+users see: propose it and add it with the user's go-ahead.
+
 ## API surface
 
 ```ts
 initAutterBrowser({ endpoint, clientKey?, service, environment?, release?, sessionTracking?, captureActions?, captureNetworkFailures?, captureTimings?, beforeSend? });
-captureException(error, context?);       // report a caught error; reads code/why/fix/link/expected
+captureException(error, context?);       // report a caught error; reads code/why/fix/link/expected; context.fingerprint overrides grouping (1.6.0)
 await autterErrorFromResponse(response); // 1.4.0+: JSON error body → Error with code/why/fix/requestId
 captureMessage(message, severity?, context?); // warning/info without an exception — severity "fatal"|"error"|"warning"|"info", default "warning"
 trackEvent(name, props?);                 // coarse usage counter — no PII in props
-setUser(id | null);                       // opaque id ONLY — never an email/name
+setUser(id | null);                       // opaque id ONLY — never an email/name; the same id the server records as enduser.id
 setContext(context | null);               // merged into every subsequent event
 flush();                                   // force-send the queue now (rarely needed — auto-flushes)
+
+// @autter/runtime-browser/breadcrumbs (1.6.0)
+enableBreadcrumbs(options?);               // options: { console?: boolean }
+addBreadcrumb({ type?, message, level?, data? });
+clearBreadcrumbs();
+
+// @autter/runtime-browser/filters (1.7.0)
+withFilters({ ...initOptions, sampleRate?, ignoreErrors?, denyUrls? }); // returns init options with a beforeSend
+createFilter(filters, next?);              // the bare beforeSend hook
+
+// @autter/runtime-browser/tracing (1.6.0)
+enableTracePropagation({ tracePropagationTargets? });
+disableTracePropagation();
 ```
 
 Warnings share the errors table server-side (a `severity` column), so
@@ -268,6 +506,14 @@ captureException(Object.assign(new Error("autter selftest"), { code: "autter_sel
 flush();
 ```
 
+For a built app, run this exception from a **production build** served
+locally or in a preview environment, with `environment` set to a
+non-production value, so its stack proves source maps. With breadcrumbs
+enabled, click a labeled control and make one failing request first. With
+trace propagation and a Node backend, call the backend's temporary
+`/__autter-selftest/error` route (see `otel-node-style`) so the browser
+records a `request_failure` with a trace id.
+
 ## Verify
 
 1. Load the app, open the devtools network tab, run the selftest above.
@@ -295,3 +541,20 @@ flush();
    backend with request summaries and confirm the browser occurrence carries
    the same request id as the server summary (**Find request** in Runtime).
    For a cross-origin API, a missing id means the expose header is missing.
+8. Source maps (built apps): `autter-runtime sourcemaps verify` passes on
+   the production build (debug ids in every bundle, no `.map` files left,
+   maps on the ingester); a local build without a key follows step 4 of the
+   reference, and CI verifies the upload. The selftest
+   exception's payload carries `debugIds`, and its issue shows original file
+   paths and function names instead of minified chunk names. See step 4 of
+   the [source maps reference](references/source-maps.md).
+9. Breadcrumbs (when enabled): the exception event in the POST body has a
+   `breadcrumbs` array, and the issue page lists "Steps before the error"
+   with the labeled click and the failing request, oldest first. Request
+   paths carry no query strings, and no message carries field values.
+10. Trace links (when enabled): the failing request has a `traceparent`
+   header `00-<32 hex>-<16 hex>-00`; the `request_failure` event carries
+   that `traceId`; the browser issue links to the server trace, and the
+   server error has its own stack. A cross-origin API request that fails its
+   preflight means its CORS does not allow `traceparent` yet.
+11. Remove the temporary selftest calls and routes.

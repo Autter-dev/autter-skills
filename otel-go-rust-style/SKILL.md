@@ -100,7 +100,7 @@ process instance ID to `/v1/platform-events`.
 
 Include route templates, HTTP methods, the deployed commit SHA, stable service and environment names, and a unique service instance ID. Keep normal traces and configure supported slow-request retention where needed. The Node/Next.js `retainTracesAboveMs` option does not apply to Go or Rust. Add dependency child spans; do not calculate endpoint p95 from sampled traces.
 
-Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). The platform rollout does not change application settings. Fixes remain draft pull requests for human review. Use existing production telemetry for verification; run selftests only in an isolated test environment.
+Self-hosted ingesters require 1.3.1 or later. See the [telemetry contract](https://github.com/Autter-dev/autter-runtime/blob/main/docs/ENDPOINT-REGRESSIONS.md). The platform rollout does not change application settings. Fixes open as draft pull requests labelled Verified, Builds or Proposal only, and a person merges them, unless the repository turned on auto-merge for verified, non-breaking fixes (off by default). Use existing production telemetry for verification; run selftests only in an isolated test environment.
 
 ## Go packages
 
@@ -519,6 +519,30 @@ hist.record(elapsed_secs, &[
 
 (Metric-SDK builder APIs move between `opentelemetry_sdk` versions —
 check the docs of the version you pinned.)
+
+## The user behind a request, and an ID they can quote (both languages)
+
+Where the handler resolves the signed-in user, put the opaque id the support
+tool knows the customer by on the request's server span, so errors recorded on
+it carry the id. Never an email or a name; skip it, and say so in the hand-off,
+when the app only knows users by email.
+
+```go
+span := trace.SpanFromContext(ctx)
+span.SetAttributes(attribute.String("enduser.id", userID))
+// show the user on failure (with the user's go-ahead): "Trace ID: " + span.SpanContext().TraceID().String()
+```
+
+```rust
+use opentelemetry::{trace::TraceContextExt, KeyValue};
+let cx = opentelemetry::Context::current();
+cx.span().set_attribute(KeyValue::new("enduser.id", user_id.to_string()));
+// show the user on failure (with the user's go-ahead): format!("Trace ID: {}", cx.span().span_context().trace_id())
+```
+
+Autter uses the id to link support tickets and "it didn't work" reports to that
+customer's errors, and matches a ticket that quotes the labelled `Trace ID`.
+Showing it changes what users see, so propose it first.
 
 ## Instrumenting slow processes (both languages)
 

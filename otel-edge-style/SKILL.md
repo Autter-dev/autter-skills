@@ -2,7 +2,7 @@
 name: otel-edge-style
 description: Wire Autter Runtime into edge and fetch-only runtimes (Cloudflare Workers, Vercel Edge and Next.js middleware, Deno, Bun) with @autter/runtime-edge. Add request summaries and coded errors, bind the server key by name, flush with waitUntil, and verify stored evidence.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   tags: [autter, telemetry, edge, cloudflare-workers, vercel-edge, nextjs-middleware, deno, bun, requests, errors]
   author: autter
 ---
@@ -163,6 +163,23 @@ otherwise `succeeded`.
   middleware `matcher` only to skip health checks and static assets.
 - Each export makes at most two attempts; undelivered records are dropped with
   a console warning. Delivery is bounded by the runtime's `waitUntil` budget.
+
+## Newer runtime-edge releases
+
+- **1.1.0:** `captureEdgeException(options, error, attributes?)` reports
+  errors from scheduled and queue handlers outside `withAutter`; keep the
+  handler's existing failure behavior.
+- **1.2.0:** `sampleRate` and `ignoreErrors` on `withAutter`, off by default;
+  add them only when the user asks to drop a named error, and suggest a
+  suppression rule in Autter first (no deploy, and it is counted).
+- **1.3.0:** each request is also counted from its summary (request counts,
+  failed-request share, release health); 1.2.0 and older send error counts
+  only, so upgrade edge services to 1.3.0. Self-hosted ingesters need 1.10.0
+  (`edge_request_counts` in `/v1/compat`). Next.js `middleware.ts` should
+  report under its own service name; if it must share the Node server's name,
+  pass `countRequests: false` so no request is counted twice.
+
+Check `npm view @autter/runtime-edge version` and install only what it shows.
 
 ## Selftest path (temporary — delete after verification)
 
