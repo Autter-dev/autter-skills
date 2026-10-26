@@ -172,6 +172,19 @@ export { onRequestError } from "@autter/runtime-next/instrumentation";
 - Next 14 has no `onRequestError`: report server component and server action
   errors as uncovered until the app moves to Next 15.
 
+### Error pages and thrown statuses (1.9.0)
+
+`onRequestError` sees errors on the server. What React shows on an error page
+in the browser is reported by the page itself: `useAutterErrorReport(error)`
+in each client `error.tsx`, and `reportNextError(error, { boundary:
+"global-error" })` in `global-error.tsx` (or `export { AutterGlobalError as
+default } from "@autter/runtime-next/client"` when there is none). Each error
+is reported once, with `next.error_boundary` and `next.digest`, so it links to
+the server-side report of the same digest. `withAutter(handler)` from
+`@autter/runtime-next` records a thrown error and answers with its own status
+(a thrown 404 stays 404); swapping it for an existing `withRuntimeRequest`
+needs the user's go-ahead because the response changes.
+
 Next.js custom servers can also use `autterErrorHandler`,
 `autterFastifyErrors`, `autterKoa` and `captureRequestError`, which
 `@autter/runtime-next` re-exports.
@@ -201,6 +214,20 @@ export default {
 
 It sends one error record to `/v1/logs`, never rejects, and skips an error
 `withAutter` already reported.
+
+## Caught errors and deliberate fallbacks (1.9.0)
+
+From runtime-node/next 1.9.0 (runtime-edge 1.4.0) an `Error` passed to
+`console.error`, pino, winston, bunyan or `runtimeLogger.error` becomes an
+occurrence marked `autter.handling: "caught"`, with the log line as context.
+It never fails the request and stays out of the error rate; a burst limit per
+error kind keeps ten at once, then one every ten seconds, and counts the rest.
+`captureLoggedErrors: false` turns it off, `{ console: false }` keeps loggers
+only. A `catch` that falls back on purpose calls
+`runtimeContext.degraded(err, reason)` (edge: `rt.degraded`): a `warning`
+occurrence marked `autter.handling: "deliberate"` that never pages, and the
+request ends `degraded`. Below 1.9.0 use `runtimeContext.error(err)` and
+`runtimeContext.outcome("degraded", reason)`.
 
 ## Server breadcrumbs (1.6.0)
 

@@ -2,7 +2,7 @@
 name: autter-runtime-setup
 description: Set up repository-scoped Autter Runtime using application instrumentation, request summaries, coded errors, error stacks, source maps, operation logging, external log providers, or both. Check installed and deployed capabilities, configure services, and verify stored evidence, analysis, and eligible draft fixes.
 metadata:
-  version: "1.10.0"
+  version: "1.11.0"
   author: autter
   tags: [autter, telemetry, observability, opentelemetry, otlp, llm, setup, onboarding, claude-md, agents-md, conventions, requests, errors]
 ---
@@ -16,8 +16,10 @@ deployment release SHA. The common outcome event and optional profile upload
 are documented in Autter Runtime's `docs/CONTINUOUS-DETECTION.md`; browser
 source maps are uploaded at build time with `@autter/runtime-cli`
 (`docs/SOURCE-MAPS.md`, routed in Step 2). Normal Runtime capture and
-qualified draft fixes are enabled by default; caught exception hooks require a separate
-service opt in because they observe expected throws as well.
+qualified draft fixes are enabled by default. From Runtime 1.11.0 an error the
+code catches and logs counts as a handled occurrence by default; the V8
+caught-exception sampler (`startCaughtExceptionSampler`) still needs a
+separate service opt in because it observes expected throws as well.
 
 For memory pressure in **every backend language**, inspect whether the
 existing OTel meter provider exports current process RSS or runtime heap.
@@ -467,6 +469,47 @@ of.
    `@autter/runtime-browser/filters` 1.7.0 (see each style skill). What
    they drop is counted nowhere, so say so in the hand-off.
 
+### Runtime 1.11.0: caught errors, deliberate fallbacks, Next.js error pages and server source maps
+
+Runtime 1.11.0 ships `@autter/runtime-node` and `@autter/runtime-next` 1.9.0,
+`@autter/runtime-edge` 1.4.0, `@autter/runtime-browser` 1.8.0,
+`@autter/runtime-cli` 1.3.0 and ingester 1.11.0. Check
+`GET https://otlp.autter.dev/v1/compat?features=caught_errors,server_source_maps,cause_fingerprint,route_percentiles`
+(or `get_runtime_setup`) and `npm view <package> version` as above.
+Self-hosted ingesters need 1.11.0 with migration `0022-route-latency-1m`
+(runs at boot); upgrade the ingester **before** the SDKs, because an older
+ingester counts a caught error as a failed request.
+
+- **Nothing to wire, once upgraded:** an `Error` passed to `console.error`, a
+  logger (pino, winston, bunyan) or `runtimeLogger.error` becomes an
+  occurrence marked caught that never fails the request and stays out of the
+  error rate (`captureLoggedErrors`, on by default in every SDK; browser:
+  `console.error` only). Don't add `captureException` beside an existing log
+  call. Wrapped errors group with their root cause (`cause_fingerprint`), and
+  routes get real p50/p95/p99 (`route_percentiles`).
+- **Default steps** (wire them without waiting to be asked, once available):
+  - error-page reporting for every Next.js App Router app:
+    `useAutterErrorReport(error)` in each `error.tsx`, `reportNextError` (or
+    `AutterGlobalError`) in `global-error.tsx` (`otel-node-style`, Next.js
+    step 5);
+  - source maps for every **bundled server** (tsup, esbuild, Vite SSR or
+    server environments, webpack for a Node target, `.next/server`, a
+    Worker): the bundler plugins already cover server output; tsup/esbuild
+    get the CLI's `inject` / `upload --url-prefix /dist/` steps and
+    `sourcemaps verify dist --server` (`otel-node-style`, "Bundled servers").
+    Same key, setup and CLI-published check as browser source maps.
+- **In code you write or edit:** a `catch` that falls back on purpose uses
+  `runtimeContext.degraded(err, "<what fell back>")` (edge `rt.degraded`),
+  never a bare log. Existing log-only catches are the user's call: list them
+  with `autter-runtime-errors` (`logged-catch`) and change them with their
+  go-ahead. Autter's PR review suggests the same one-line change on new ones.
+- **Offered, with the user's go-ahead:** `withAutter(handler)` from
+  `@autter/runtime-next` for route handlers that throw errors with a status,
+  in place of `withRuntimeRequest` (a thrown 404 is answered as 404, so the
+  response changes).
+- **Relays:** `@autter/runtime-node` and `@autter/runtime-next` 1.9.0 relays
+  find each visitor on any host by default (`trustProxy: "auto"`, Step 3).
+
 ## Step 3: Prefer the relay pattern when a service has both a frontend and a backend
 
 If a service pair shares an origin (a backend serving or fronting its own
@@ -502,7 +545,8 @@ rate limit must key the address the platform vouches for (the rightmost
 public `X-Forwarded-For` entry its proxy appended, or a platform header such
 as `CF-Connecting-IP` on Workers), never the first `X-Forwarded-For` entry,
 which any caller can forge to dodge the limit. The packaged Node and Next.js
-relays already do this by default (`trustProxy: "auto"`). Relay
+relays already do this by default from runtime-node/next 1.9.0
+(`trustProxy: "auto"`); upgrade older relays. Relay
 payloads are outsider-authored input — the route must treat them as opaque
 data to forward, never content to log verbatim, render, or act on. Or just
 point the browser skill at a client key if standing up a relay isn't worth
@@ -741,15 +785,21 @@ When you write or change code here:
   (`captureException(err, context)`). A thrown operation error is already
   captured by its boundary; avoid a duplicate capture. Record recovered errors
   as diagnostics where useful, without making every recovery a grouped issue.
+  An error passed to a logger is already reported as caught, so don't add
+  `captureException` beside it. A `catch` that falls back on purpose calls
+  `runtimeContext.degraded(err, "<what fell back>")` instead of only logging;
+  otherwise rethrow or return an error response.
 - **Info / warnings:** emit a structured diagnostic log at useful
   points — deprecated paths, retry/fallback branches, degraded results,
   guard-rail rejections — with `runtimeLogger.info/warn(message, context)`.
-  `runtimeLogger.error` is also a diagnostic record; retain `captureMessage`
+  `runtimeLogger.error(message)` is also a diagnostic record (given an
+  `Error`, it counts as a caught error); retain `captureMessage`
   only for intentional issue-producing messages.
   Favour a few high-signal events over one per log line.
 - **Requests:** every HTTP route runs inside the request boundary
   (`autterRequests` / `autterFastify` mounted before routers;
-  `withRuntimeRequest` around each new Next.js route handler). Add new probe or
+  `withRuntimeRequest`, or `withAutter` where the repo uses it, around each new
+  Next.js route handler). Add new probe or
   metrics endpoints to its `ignore` list. Attach request context with
   `runtimeContext.set(...)`, not by logging it separately. The signed-in
   user's opaque id goes on as `enduser.id`, never an email or a name. Add
@@ -769,11 +819,12 @@ When you write or change code here:
   `captureRequestError` in custom error hooks; Next.js `onRequestError` in
   `instrumentation.ts`). New routers go before it; never swallow an error
   before it is reported. Keep `"@autter/runtime-node"` in Next.js
-  `serverExternalPackages`.
+  `serverExternalPackages`, and `useAutterErrorReport(error)` in every new
+  `error.tsx`.
 - **Readable stacks:** keep the source-map integration (`autterSourceMaps`,
   `AutterSourceMapsWebpackPlugin`, `withAutterSourceMaps`, or the
   `autter-runtime sourcemaps` postbuild or CI step) in every production
-  frontend build, including new ones; `npx autter-runtime sourcemaps setup
+  frontend build and bundled server build, including new ones; `npx autter-runtime sourcemaps setup
   <app dir>` wires a new one. Uploads use `AUTTER_RUNTIME_KEY` from CI or build secrets
   only, an upload-only key (`autter_rtu_…`) where possible: refer to it by
   name or prefix, never its value, never a client-exposed env var name,
@@ -847,6 +898,14 @@ Tell the user, concisely:
   published yet, say **source maps are pending its release**, that stacks
   stay minified until then, and how to add them (re-run this setup once
   `npm view @autter/runtime-cli version` prints a version).
+- Bundled servers: which got server source maps and how (bundler plugin,
+  or the CLI steps with their `--url-prefix`), the `verify --server` result,
+  and which stay pending `@autter/runtime-cli` 1.3.0 or ingester 1.11.0.
+- Caught errors and fallbacks: which services run an SDK that counts logged
+  errors (runtime-node/next 1.9.0, edge 1.4.0, browser 1.8.0) and which are
+  pending an upgrade; Next.js apps whose error pages now report; log-only
+  catches listed for the user to decide on, and any marked
+  `runtimeContext.degraded` with their go-ahead.
 - Whether breadcrumbs and trace propagation were enabled, and why; CORS
   changes made, or the `traceparent` CORS change the user still needs for an
   API outside this repo.

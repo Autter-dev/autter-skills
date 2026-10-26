@@ -1,8 +1,8 @@
 ---
 name: otel-edge-style
-description: Wire Autter Runtime into edge and fetch-only runtimes (Cloudflare Workers, Vercel Edge and Next.js middleware, Deno, Bun) with @autter/runtime-edge. Add request summaries and coded errors, bind the server key by name, flush with waitUntil, and verify stored evidence.
+description: Wire Autter Runtime into edge and fetch-only runtimes (Cloudflare Workers, Vercel Edge and Next.js middleware, Deno, Bun) with @autter/runtime-edge. Add request summaries and coded errors, count caught errors and mark deliberate fallbacks, bind the server key by name, flush with waitUntil, upload Worker source maps, and verify stored evidence.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   tags: [autter, telemetry, edge, cloudflare-workers, vercel-edge, nextjs-middleware, deno, bun, requests, errors]
   author: autter
 ---
@@ -178,6 +178,20 @@ otherwise `succeeded`.
   (`edge_request_counts` in `/v1/compat`). Next.js `middleware.ts` should
   report under its own service name; if it must share the Node server's name,
   pass `countRequests: false` so no request is counted twice.
+- **1.4.0:** caught errors count: an `Error` passed to `console.error` or
+  `rt.error` becomes a handled occurrence with the log line as context, never
+  failing the request (`captureLoggedErrors`, on by default; `false`, or
+  `{ console: false }` to keep `rt.error` only). A `catch` that falls back on
+  purpose calls `rt.degraded(err, reason)`: a `warning` occurrence marked
+  deliberate that never pages, and the request ends `degraded`. Below 1.4.0,
+  `rt.error(err)` plus `rt.outcome("degraded", reason)`. Next.js middleware
+  gets the same from `@autter/runtime-next` 1.9.0. Self-hosted ingesters need
+  1.11.0 (`caught_errors` in `/v1/compat`).
+- **Bundled Workers:** `@autter/runtime-cli` 1.3.0 uploads a Worker's source
+  maps like any server bundle (`sourcemaps inject` / `upload` on the build
+  output, then `verify --server`); the SDK sends the bundle's debug id with
+  each exception. See `otel-node-style`, "Bundled servers". Self-hosted
+  ingesters need 1.11.0 (`server_source_maps`).
 
 Check `npm view @autter/runtime-edge version` and install only what it shows.
 

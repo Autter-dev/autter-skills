@@ -1,8 +1,8 @@
 ---
 name: otel-browser-style
-description: Wire Autter Runtime into browser apps, including source map upload for readable stacks, breadcrumbs, links from browser errors to server traces, coded API errors, request-id correlation with server requests, CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
+description: Wire Autter Runtime into browser apps, including source map upload for readable stacks, caught console.error errors, Next.js error pages, breadcrumbs, links from browser errors to server traces, coded API errors, request-id correlation with server requests, CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
 metadata:
-  version: "1.4.0"
+  version: "1.5.0"
   tags: [autter, telemetry, browser, react, spa, error-tracking, sourcemaps, breadcrumbs, tracing, request-id, errors]
   author: autter
 ---
@@ -27,18 +27,22 @@ CLI is not published, wire nothing and report source maps as pending its
 release.
 
 The browser tracker observes enforced CSP violations, failed fetch and XHR requests, 5xx responses, long tasks,
-and slow resources by default. Use `captureOutcome(stableName, message)` for
+and slow resources by default. From 1.8.0 an `Error` passed to `console.error`
+is also reported as a caught exception, with the rest of the line as context
+(once, even when an error boundary already called `captureException`). Leave
+it on; `captureLoggedErrors: false` leaves `console.error` untouched. Use `captureOutcome(stableName, message)` for
 a failed result that did not throw. Keep the release set to the deployed
 commit SHA. Never put the server key or source maps in a public browser
 request.
 
 ```bash
-npm install @autter/runtime-browser@^1.6.0
+npm install @autter/runtime-browser@^1.8.0
 ```
 
 Use the project's package manager and commit its lockfile. Run `npm view
 @autter/runtime-browser version` first: 1.6.0 adds source-map debug ids,
-breadcrumbs, trace propagation and fingerprint override. If only an older
+breadcrumbs, trace propagation and fingerprint override; 1.8.0 adds caught
+`console.error` errors (`caught_errors` in `/v1/compat`). If only an older
 release is published, install the newest one, keep the rest of setup working,
 and report those features as pending. Ingester support is listed by
 `GET https://otlp.autter.dev/v1/compat` (`breadcrumbs`,
@@ -193,7 +197,7 @@ export const { POST } = createAutterRelayRoute({
 Other fetch-style servers (Remix, Hono, Bun, Deno) use
 `createBrowserRelayFetchHandler({ apiKey })` from `@autter/runtime-node`.
 
-The packaged relays rate-limit each visitor and, in `@autter/runtime-node` releases after 1.8.0 (check that the installed package's `RelayOptions` has `trustProxy`),
+The packaged relays rate-limit each visitor and, in `@autter/runtime-node` and `@autter/runtime-next` 1.9.0+,
 find the visitor's address on any host by default (`trustProxy: "auto"`).
 Don't add `trustProxy: true`; it trusts a header callers can forge. Bun and
 Deno servers with no proxy in front pass the real address with `clientIp`
@@ -246,6 +250,12 @@ import { AutterErrorBoundary } from "@autter/runtime-next"; // works in any Reac
   <App />
 </AutterErrorBoundary>
 ```
+
+**Next.js error pages** (`@autter/runtime-next` 1.9.0+): call
+`useAutterErrorReport(error)` from `@autter/runtime-next/client` in each
+client `app/**/error.tsx`, and `reportNextError(error, { boundary:
+"global-error" })` in `app/global-error.tsx` (or export `AutterGlobalError`
+as its default when there is none). See `otel-node-style`, Next.js step 5.
 
 **Vue**: call `captureException(err)` from `app.config.errorHandler`.
 
@@ -448,7 +458,7 @@ users see: propose it and add it with the user's go-ahead.
 ## API surface
 
 ```ts
-initAutterBrowser({ endpoint, clientKey?, service, environment?, release?, sessionTracking?, captureActions?, captureNetworkFailures?, captureTimings?, beforeSend? });
+initAutterBrowser({ endpoint, clientKey?, service, environment?, release?, sessionTracking?, captureActions?, captureNetworkFailures?, captureTimings?, captureLoggedErrors?, beforeSend? }); // captureLoggedErrors (1.8.0): console.error(err) counts, default true
 captureException(error, context?);       // report a caught error; reads code/why/fix/link/expected; context.fingerprint overrides grouping (1.6.0)
 await autterErrorFromResponse(response); // 1.4.0+: JSON error body → Error with code/why/fix/requestId
 captureMessage(message, severity?, context?); // warning/info without an exception — severity "fatal"|"error"|"warning"|"info", default "warning"

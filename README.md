@@ -42,28 +42,31 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 | --- | --- |
 | [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, the repository's shared memory (a map, one page per area of the codebase, and a what-works ledger, rewritten nightly from the team's agent sessions, reviews, production, CI and scans) before editing an area, repository wiki Markdown, accepted process learnings and team rules, production lessons for the files being edited, indexed code/architecture/run commands, and Runtime issues, requests and evidence packs through Autter MCP. Checks the diff with `check_change` before committing and rates the lessons it used. Uses source commits and freshness metadata to ground coding work in how the user works, how the platform is built, and what already broke in production. |
 | [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, request entry points, queues and error classes, checks installed and deployed capabilities (through `get_runtime_setup` when Autter MCP is connected), configures the chosen ingestion path, routes built frontends to source-map upload and Next.js apps to server error capture, verifies stored traces/errors with readable stacks, breadcrumbs and trace links, metrics, logs/operations, request summaries, coded errors and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
-| [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`, including per-request summaries, error catalogs and coded errors, server error hooks that keep stacks, Next.js server errors through `onRequestError`, background work, local files, testing and logger-only mode. Has a short edge section; `otel-edge-style` has the full edge setup. |
-| [`otel-edge-style`](./otel-edge-style/) | Cloudflare Workers, Vercel Edge and Next.js `middleware.ts`, Deno and Bun, via `@autter/runtime-edge`. |
-| [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including source-map upload in four steps (check, `autter-runtime sourcemaps setup`, an upload-only key stored straight into CI, `sourcemaps verify`), breadcrumbs, links from browser errors to server traces, coded API errors and request-id correlation, CSP violations and privacy-conscious recent action context. |
+| [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`, including per-request summaries, error catalogs and coded errors, server error hooks that keep stacks, caught errors counted from logs and `runtimeContext.degraded` for deliberate fallbacks, Next.js server errors through `onRequestError`, `withAutter(handler)` and error-page reporting, readable stacks for bundled servers, background work, local files, testing and logger-only mode. Has a short edge section; `otel-edge-style` has the full edge setup. |
+| [`otel-edge-style`](./otel-edge-style/) | Cloudflare Workers, Vercel Edge and Next.js `middleware.ts`, Deno and Bun, via `@autter/runtime-edge`, including caught errors, `rt.degraded` and Worker source maps. |
+| [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including caught `console.error` errors, Next.js error pages, source-map upload in four steps (check, `autter-runtime sourcemaps setup`, an upload-only key stored straight into CI, `sourcemaps verify`), breadcrumbs, links from browser errors to server traces, coded API errors and request-id correlation, CSP violations and privacy-conscious recent action context. |
 | [`otel-python-style`](./otel-python-style/) | Django, FastAPI, Flask, Celery workers, plain WSGI/ASGI, via the standard OpenTelemetry Python SDK plus Runtime's copied `autter_tracing.py`, which keeps every error under head sampling; coded errors and request summaries through OTel attributes. |
 | [`otel-go-rust-style`](./otel-go-rust-style/) | Go and Rust backends, via each language's official OTel SDK. |
 | [`otel-generic-style`](./otel-generic-style/) | Everything else — Java, .NET, PHP, Ruby, Elixir, Kotlin, … — via standard OTLP/HTTP + OTel env vars. |
 | [`autter-runtime-logs`](./autter-runtime-logs/) | Local debugging: reads `.autter/runtime/*.jsonl` (or `autter logs --local`) to explain failed or slow requests, one request id, and recent coded errors. |
-| [`autter-runtime-errors`](./autter-runtime-errors/) | Coverage audit: uncovered routes/jobs, plain throws on user-facing paths, swallowing catches, invalid codes, sensitive context keys. Proposes a catalog; applies only with approval. |
+| [`autter-runtime-errors`](./autter-runtime-errors/) | Coverage audit: uncovered routes/jobs, plain throws on user-facing paths, swallowing and log-only catches, invalid codes, sensitive context keys. Proposes a catalog; applies only with approval. |
 
 ### Versions
 
 | Skill | Version | Runtime it targets |
 | --- | --- | --- |
-| `autter-runtime-setup` | 1.10.0 | all of the below |
-| `otel-node-style` | 1.6.0 | `@autter/runtime-node` / `@autter/runtime-next` 1.6.0+ (1.5.0 for request summaries and codes, 1.4.0 for operations only) |
-| `otel-edge-style` | 1.1.0 | `@autter/runtime-edge` 1.0.0+ (1.3.0 for request counts), `@autter/runtime-next/edge` 1.5.0+ |
-| `otel-browser-style` | 1.4.0 | `@autter/runtime-browser` 1.6.0+ (1.4.0 for coded errors and request ids) |
+| `autter-runtime-setup` | 1.11.0 | all of the below |
+| `otel-node-style` | 1.7.0 | `@autter/runtime-node` / `@autter/runtime-next` 1.9.0+ for caught errors, `runtimeContext.degraded`, `withAutter(handler)` and error pages (1.6.0 for error hooks, 1.5.0 for request summaries and codes, 1.4.0 for operations only); `@autter/runtime-cli` 1.3.0 for server source maps |
+| `otel-edge-style` | 1.2.0 | `@autter/runtime-edge` 1.0.0+ (1.3.0 for request counts, 1.4.0 for caught errors and `rt.degraded`), `@autter/runtime-next/edge` 1.5.0+ |
+| `otel-browser-style` | 1.5.0 | `@autter/runtime-browser` 1.6.0+ (1.8.0 for caught `console.error` errors, 1.4.0 for coded errors and request ids) |
 | `otel-python-style`, `otel-go-rust-style`, `otel-generic-style` | 1.4.0 | OTel SDKs + ingester 1.5.0+ |
-| `autter-runtime-logs`, `autter-runtime-errors` | 1.0.0 | runtime-node/next 1.5.0+ |
+| `autter-runtime-errors` | 1.1.0 | runtime-node/next 1.5.0+ (1.9.0 for the `logged-catch` fix) |
+| `autter-runtime-logs` | 1.0.0 | runtime-node/next 1.5.0+ |
 
 Self-hosted ingesters need **1.5.0+** for request summaries and code grouping,
-1.6.0/1.7.0 for source maps and upload keys, and 1.10.0 for edge request counts.
+1.6.0/1.7.0 for source maps and upload keys, 1.10.0 for edge request counts,
+and 1.11.0 for caught errors, server source maps, root-cause grouping and
+route percentiles.
 
 ## Repository knowledge through MCP
 
@@ -235,6 +238,23 @@ This needs SDK **1.6.0** (`runtime-edge` 1.1.0, `runtime-cli` 1.2.0 for
 `browser_trace_propagation`, `sourcemap_upload_keys`, `source_map_verify`). See
 [source maps setup](otel-browser-style/references/source-maps.md) and
 [server errors setup](otel-node-style/references/server-errors.md).
+
+Runtime 1.11.0 extends this:
+
+- **Caught errors count.** An `Error` passed to `console.error`, a logger or
+  `runtimeLogger.error` becomes a handled occurrence that never fails the
+  request (`captureLoggedErrors`, on by default; runtime-node/next 1.9.0,
+  runtime-edge 1.4.0, runtime-browser 1.8.0). A `catch` that falls back on
+  purpose says so with `runtimeContext.degraded(err, reason)`, which records
+  a `warning` that never pages and ends the request `degraded`.
+- **Next.js.** `withAutter(handler)` answers a thrown error with its own
+  status (offered, since the response changes), and `useAutterErrorReport`,
+  `reportNextError` and `AutterGlobalError` report what error pages show
+  (wired by default).
+- **Server source maps.** `@autter/runtime-cli` 1.3.0 uploads maps for
+  bundled servers (tsup, esbuild, Vite SSR, webpack Node targets,
+  `.next/server`, Workers); the plugins cover server output automatically,
+  and `sourcemaps verify --server` checks it.
 
 ## Coded errors
 

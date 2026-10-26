@@ -1,8 +1,8 @@
 ---
 name: otel-node-style
-description: Wire Autter Runtime into Node.js, Next.js and edge runtimes using the official packages. Check installed support, keep server error stacks, add Next.js onRequestError, mount request summaries, add coded errors and operations, configure logs, and verify errors, usage, requests, and LLM tracing.
+description: Wire Autter Runtime into Node.js, Next.js and edge runtimes using the official packages. Check installed support, keep server error stacks, count caught errors and mark deliberate fallbacks, add Next.js onRequestError, withAutter and error pages, mount request summaries, add coded errors and operations, upload server source maps, configure logs, and verify errors, usage, requests, and LLM tracing.
 metadata:
-  version: "1.6.0"
+  version: "1.7.0"
   tags: [autter, telemetry, nodejs, nextjs, express, fastify, koa, edge, opentelemetry, llm, logging, requests, errors, breadcrumbs]
   author: autter
 ---
@@ -34,6 +34,8 @@ diagnostic logs, operations or request summaries, and
 | Errors, usage, LLM tracing, `withProcessSpan` | runtime-node/next 1.3.2+ |
 | `runtimeLogger`, `withRuntimeOperation` | runtime-node/next **1.4.0+**, ingester 1.4.0+ |
 | Request summaries, `runtimeContext`, coded errors, `fork`/carrier, sinks, `/testing`, `initAutterLogging` | runtime-node/next **1.5.0+**, ingester **1.5.0+** |
+| Caught errors counted by default, `runtimeContext.degraded`, Next.js `withAutter(handler)` and error-page reporting | runtime-node/next **1.9.0+** (runtime-edge 1.4.0+), ingester **1.11.0+** |
+| Readable stacks from bundled servers (tsup, esbuild, Vite SSR, webpack Node, `.next/server`) | runtime-cli **1.3.0+**, ingester **1.11.0+** |
 
 Neither `latest` nor a package version in the source establishes that a
 feature is published, installed or deployed. Run the capability check below.
@@ -214,6 +216,36 @@ only calls `captureException(err)` and `next(err)` can be replaced by
 [server errors reference](references/server-errors.md) for placement edge
 cases, NestJS, unhandled rejections, Next.js and edge.
 
+### Bundled servers: readable stacks (runtime-cli 1.3.0)
+
+A server that ships bundled (tsup, esbuild, webpack for a Node target, Vite
+SSR or Vite 6 server environments, Next.js `.next/server`, a Worker) reports
+frames like `/app/dist/server.js:1:90417` until its source maps are
+uploaded. An unbundled server (plain `tsc` output or source run directly)
+needs nothing here. With `@autter/runtime-cli` 1.3.0+:
+
+- **Already using a bundler plugin for the frontend** (`@autter/runtime-cli/vite`,
+  `/webpack`, `withAutterSourceMaps`): server output is covered by the same
+  plugin. Change nothing; `serverBundles: false` is the opt-out.
+- **tsup / esbuild:** build with maps (`sourcemap: true` / `--sourcemap`),
+  then a postbuild or CI step after the build:
+
+```bash
+npx autter-runtime sourcemaps inject dist
+npx autter-runtime sourcemaps upload dist --url-prefix /dist/ --delete-after-upload --best-effort
+npx autter-runtime sourcemaps verify dist --server
+```
+
+`--url-prefix` is any tail of the path the server runs the bundle from
+(`/dist/` for `/app/dist/server.js`). Keep server and browser maps of one
+release under different prefixes (`/dist/` vs `/assets/`). The upload key,
+`sourcemaps setup` and the CLI-published check are the same as in
+`otel-browser-style`'s source maps reference. The Node and edge SDKs send
+each bundle's debug id with the exception, so the map is found wherever the
+host runs it. The first upload for an existing service starts new issues for
+its errors once, because frames group as resolved. Self-hosted ingesters need
+1.11.0 (`server_source_maps` in `/v1/compat`).
+
 ### App already runs its own OpenTelemetry SDK: logger-only mode
 
 If the process already starts a `NodeSDK`/tracer provider (check for
@@ -282,6 +314,47 @@ captured later in the same request (1.6.0, ingester 1.6.0). Add
 want custom grouping can pass `captureException(err, { fingerprint })`;
 offer it, do not add it by default.
 
+### Caught errors and deliberate fallbacks (1.9.0)
+
+From runtime-node/next 1.9.0 an `Error` the code catches and logs counts on
+its own: one passed to `console.error`, pino, winston, bunyan or
+`runtimeLogger.error` becomes an occurrence with the log line as context and
+the error's stack, marked `autter.handling: "caught"`. It never fails the
+request and stays out of the error rate. A log line without an error object
+is untouched, and an error also passed to `captureException` is reported
+once. So don't add `captureException` next to an existing `logger.error(err)`
+on 1.9.0+, and don't remove existing ones either. It is on by default; turn
+it off only if the user asks:
+
+```js
+initAutterServer({ /* … */ captureLoggedErrors: false });               // off
+initAutterServer({ /* … */ captureLoggedErrors: { console: false } });  // loggers, not console
+```
+
+A `catch` that falls back on purpose says so in one line instead of logging:
+
+```js
+const { runtimeContext } = require("@autter/runtime-node");
+
+try {
+  prices = await pricingService.get();
+} catch (err) {
+  runtimeContext.degraded(err, "pricing service down, using cached prices");
+  prices = cached;
+}
+```
+
+`runtimeContext.degraded(err, reason)` records the error at `warning`
+severity, marked `autter.handling: "deliberate"`, never pages, and ends the
+request or operation `degraded` unless it already failed or set its own
+outcome. Use it only where continuing is intended; a failure the caller
+should see is rethrown or answered with an error response. Below 1.9.0, use
+`runtimeContext.error(err)` followed by `runtimeContext.outcome("degraded",
+reason)`. Autter's PR review suggests the same one-line change on added
+`catch` blocks that only log, picking the call by the installed version.
+Self-hosted ingesters need 1.11.0 (`caught_errors` in `/v1/compat`) to keep
+these out of the error rate.
+
 ### Diagnostic messages and issue-producing events
 
 After confirming operation-logging support, use structured logs for ordinary
@@ -296,7 +369,8 @@ log.warn("Order lookup used fallback", { dependency: { name: "cache", attempts: 
 ```
 
 These records appear in **Runtime → Logs**, separately from issues.
-`runtimeLogger.error` does not automatically create an issue. Keep
+`runtimeLogger.error` with only a message does not create an issue (from
+1.9.0, one given an `Error` counts as a caught error, above). Keep
 `captureException` for handled exceptions and `captureMessage` for messages
 that intentionally need severity-tagged issue grouping. Prefer stable
 messages and bounded, non-sensitive context. If the logging release is
@@ -325,7 +399,7 @@ app.post("/checkout", async (req, res) => {
   runtimeContext.set({ cart: { items: req.body.items.length } }); // no PII
   runtimeContext.info("Applied coupon", { coupon: req.body.coupon });
   // …
-  if (usedCache) runtimeContext.outcome("degraded", "Used cached prices");
+  if (usedCache) runtimeContext.outcome("degraded", "Used cached prices"); // after a caught error: runtimeContext.degraded(err, reason)
   res.json({ ok: true });
 });
 ```
@@ -586,7 +660,7 @@ Works with or without a body-parser middleware in front of it. Ships a
 built-in per-visitor rate limit (120 req/min default; pass
 `perIpRateLimit: false` only if a WAF/CDN already rate-limits this route).
 
-How it tells visitors apart, in `@autter/runtime-node` releases after 1.8.0 (check that the installed package's `RelayOptions` has `trustProxy`):
+How it tells visitors apart, in `@autter/runtime-node` 1.9.0+ (`@autter/runtime-next` 1.9.0+):
 the default `trustProxy: "auto"` works behind any load balancer, ingress or
 hosting platform with no setup. It reads `X-Forwarded-For` right to left and
 takes the first public address (the one the nearest proxy appended), and it
@@ -618,12 +692,13 @@ follow.
 ## Next.js (any router)
 
 ```bash
-npm install @autter/runtime-next@^1.6.0
+npm install @autter/runtime-next@^1.9.0
 ```
 
-If 1.6.0 is not published yet, install `^1.5.0`, skip `onRequestError`, and
-report it as pending. `next.config`, three files, plus wrapping the route
-handlers (step 4):
+If 1.9.0 is not published yet, install `^1.6.0` and report caught errors,
+`withAutter(handler)` and error-page reporting as pending (on `^1.5.0`, skip
+`onRequestError` too). `next.config`, three files, wrapping the route
+handlers (step 4), plus the error pages (step 5):
 
 **0. `next.config`** (one SDK copy — required; the 1.6.0 docs added it and
 1.5.0 installs need it too): merge `"@autter/runtime-node"` into
@@ -762,17 +837,59 @@ routes, server actions and page renders are not covered; list them as
 uncovered in the hand-off. `middleware.ts` runs on the edge: wrap it with
 `withAutter` from `@autter/runtime-next/edge` (see Edge runtimes below).
 
+Handlers that throw errors carrying a status (`RuntimeError`, coded errors)
+can use `withAutter(handler)` from `@autter/runtime-next` (1.9.0+) instead:
+it is `withRuntimeRequest` that also answers a thrown error with the error's
+own status, so a thrown 404 is recorded and answered as 404, not an anonymous
+500. `redirect()` and `notFound()` pass through and are never reported.
+
+```ts
+import { withAutter, RuntimeError } from "@autter/runtime-next";
+
+export const GET = withAutter(async (request, { params }) => {
+  const order = await findOrder(params.id);
+  if (!order) throw new RuntimeError({ status: 404, code: "orders.not_found", message: "No such order" });
+  return Response.json(order);
+});
+```
+
+Use it for new handlers. Swapping an existing `withRuntimeRequest` changes
+what a thrown error answers, so propose it and swap with the user's go-ahead,
+like [error responses](references/request-summaries.md#error-responses-ask-first).
+
+**5. Error pages (1.9.0+, always add):** errors React shows on a Next.js error
+page reach Autter only when the page reports them. In each existing client
+`app/**/error.tsx`, call `useAutterErrorReport(error)` at the top and keep
+the page as it is:
+
+```tsx
+"use client";
+import { useAutterErrorReport } from "@autter/runtime-next/client";
+
+export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  useAutterErrorReport(error);
+  // existing page body
+}
+```
+
+In an existing `app/global-error.tsx`, call
+`reportNextError(error, { boundary: "global-error" })` (or the hook with that
+option). With none, add `export { AutterGlobalError as default } from
+"@autter/runtime-next/client";`, which reports and renders a minimal page
+with its own `<html>`. Each error is reported once, with the boundary and
+Next's `digest`, through the browser tracker from step 3.
+
 ## Edge runtimes (Cloudflare Workers, Vercel Edge, Deno, Bun)
 
 The short version; `otel-edge-style` has the full setup (key binding, coded
 errors and responses, privacy limits, selftest).
 
 ```bash
-npm install @autter/runtime-edge@^1.1.0
+npm install @autter/runtime-edge@^1.4.0
 ```
 
-(`^1.0.0` if 1.1.0 is not published yet; `captureEdgeException` then stays
-pending.)
+(`^1.3.0` if 1.4.0 is not published yet; caught errors and `rt.degraded` then
+stay pending.)
 
 ```ts
 import { withAutter } from "@autter/runtime-edge";
@@ -799,6 +916,11 @@ ingesters need 1.10.0 (`edge_request_counts` in `/v1/compat`). Next.js `middlewa
 under its own service name; if it must share the Node server's name, pass
 `countRequests: false` so no request is counted twice.
 
+From 1.4.0, an `Error` passed to `console.error` or `rt.error` counts as a
+caught error (`captureLoggedErrors`, on by default; `false`, or
+`{ console: false }` to keep `rt.error` only), and `rt.degraded(err,
+reason)` marks a deliberate fallback the same way as on Node.
+
 Errors thrown from the handler are reported by `withAutter`. For scheduled
 and queue handlers outside it, report with `captureEdgeException(options,
 error, attributes?)` (1.1.0) and keep the handler's existing failure
@@ -824,6 +946,9 @@ behavior; see the [server errors reference](references/server-errors.md).
   drop is counted nowhere: suggest a suppression rule in Autter first
   (Repository settings → Runtime), which needs no deploy and is counted.
   Edge: the same two options on `withAutter` (`@autter/runtime-edge` 1.2.0).
+- Caught errors (1.9.0): `captureLoggedErrors` is on, so an `Error` passed
+  to `console.error` or a logger becomes a handled occurrence that never
+  fails the request. Leave it on; `{ console: false }` keeps loggers only.
 - LLM tracing: on by default (`llmTracing`) — GenAI spans bypass the 1%
   sampling and are always sent. Leave it on unless the user asks.
 - Metrics export every 60s (`metricIntervalMs`).
@@ -1018,7 +1143,8 @@ curl -s 'localhost:3000/__autter-selftest/coded?variant=expected'
    for the route; with operation logging, its breadcrumbs include the
    `runtimeLogger` entry. Next.js: the error also carries `next.route_path`.
    Errors reported twice or request summaries printed to the console mean
-   `serverExternalPackages` is missing.
+   `serverExternalPackages` is missing. A bundled server with uploaded maps
+   shows its own source files in that stack, not `dist/server.js`.
 7. `curl` the coded route's three variants. **Runtime → Errors** shows one
    `autter_selftest.failed` issue (code chip, "Declared by the application"
    why/fix) with two occurrences, and an `autter_selftest.declined` issue

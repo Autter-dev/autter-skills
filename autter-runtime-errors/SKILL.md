@@ -1,8 +1,8 @@
 ---
 name: autter-runtime-errors
-description: Audit a repository's Autter Runtime coverage for requests, jobs and errors - uncovered routes and jobs, plain throws on user-facing paths, swallowing catch blocks, invalid error codes and sensitive context keys - then propose an error catalog and edits. Applies changes only with the user's approval.
+description: Audit a repository's Autter Runtime coverage for requests, jobs and errors - uncovered routes and jobs, plain throws on user-facing paths, swallowing and log-only catch blocks, invalid error codes and sensitive context keys - then propose an error catalog and edits. Applies changes only with the user's approval.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   author: autter
   tags: [autter, telemetry, errors, error-codes, coverage, audit, requests, runtime]
 ---
@@ -28,7 +28,9 @@ the specific change set.
   `npm ls @autter/runtime-node @autter/runtime-next @autter/runtime-edge @autter/runtime-browser`.
   Request middleware, `runtimeContext` and catalogs need runtime-node/next
   **1.5.0+** (edge **1.0.0+**, browser **1.4.0+**); code grouping needs a
-  **1.5.0+** ingester. Other languages use the attribute contract in their
+  **1.5.0+** ingester. `runtimeContext.degraded` and caught errors counted
+  from logs need runtime-node/next **1.9.0+** (edge **1.4.0+**, browser
+  **1.8.0+**) and ingester **1.11.0+**. Other languages use the attribute contract in their
   style skill.
 - If the repo is below those versions, still audit, but propose code changes
   that the installed version supports and list the rest as "after upgrade".
@@ -45,11 +47,12 @@ proposed fix. Skip generated code, vendored code, tests and fixtures.
 | `uncovered-route` | `runtime_coverage_uncovered_handler` | HTTP service or route handler with no request coverage: no `autterRequests` / `autterFastify` / `withRuntimeRequest` / `withAutter` / summary middleware on its app or router | Mount the middleware once per app (see the style skill), not per route |
 | `uncovered-job` | `runtime_coverage_uncovered_handler` | Queue consumer, cron/scheduled task or worker entry point without `withRuntimeOperation` / `withProcessSpan` (or a job span in other languages) | Wrap the job body with a stable name; propagate `runtimeContext.carrier()` from the producer |
 | `plain-throw-user-facing` | `runtime_coverage_uncoded_error` | `throw new Error(...)` (or a bare `HttpError`/`AppError` with no code) whose message reaches an API response or UI, **in a service that already has a catalog** | Use or extend the domain catalog; keep the message text |
-| `swallowed-catch` | `runtime_coverage_swallowed_catch` | `catch` that neither rethrows, captures (`captureException`, `runtimeContext.error`, `rt.captureException`, `record_exception`/`RecordError`), sets an outcome, nor returns an error result | Capture, set `outcome("degraded"/"failed", …)`, or rethrow. An intentional ignore gets a short comment naming why |
+| `swallowed-catch` | `runtime_coverage_swallowed_catch` | `catch` that neither rethrows, captures (`captureException`, `runtimeContext.error`, `runtimeContext.degraded`, `rt.captureException`, `rt.degraded`, `record_exception`/`RecordError`), sets an outcome, nor returns an error result | Capture, set `outcome("degraded"/"failed", …)`, or rethrow. An intentional ignore gets a short comment naming why |
+| `logged-catch` | `runtime_coverage_logged_catch` | `catch` whose body only logs the error and carries on, so Runtime cannot tell a deliberate fallback from a failure the caller should see | If continuing is intended, replace the log call with `runtimeContext.degraded(err, "<what fell back>")` (runtime-node/next 1.9.0+, edge 1.4.0+ as `rt.degraded`); older: `runtimeContext.error(err)` + `runtimeContext.outcome("degraded", …)`. If not, rethrow or return an error response. The PR review posts this as a one-click suggestion |
 | `invalid-code` | `runtime_coverage_invalid_error_code` | A literal code that fails `^[a-z][a-z0-9_]*(\.[a-z0-9_]+){0,3}$` or > 80 chars, has no namespace, or contains interpolation/ids (`` `billing.${id}` ``) | Rename to a stable namespaced code; move ids into context |
 | `sensitive-context-key` | `runtime_coverage_sensitive_context` | Context, error `why`/`fix`/`message`/`internal` or summary attributes with keys or values like `password`, `token`, `secret`, `authorization`, `cookie`, `apiKey`, `email`, `phone`, `ssn`, `card`, raw bodies or full URLs with query strings | Remove, or replace with an opaque id or a coarse value |
 | `fire-and-forget` | — (audit only) | Unawaited promise doing work that can fail inside a request (`void sendEmail()`, `.then()` without catch) | `runInBackground(name, fn)` or await it |
-| `duplicate-capture` | — (audit only) | The same error captured at two boundaries (handler and error middleware) | Keep the outer boundary only |
+| `duplicate-capture` | — (audit only) | The same error captured at two boundaries (handler and error middleware). A `logger.error(err)` beside `captureException(err)` is not one on 1.9.0+ (reported once) | Keep the outer boundary only |
 
 Be precise rather than exhaustive: a `throw` deep in a library that is always
 caught and mapped above is not user-facing. Mark uncertain findings
