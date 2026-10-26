@@ -114,9 +114,10 @@ Before changing code in an area whose page is not in context:
 
    Pass that to `get_repo_memory`; with only `repo` it returns the home page
    and the index of pages, and `query` searches the pages. Without the MCP
-   server, the Autter CLI prints the same memory: `autter memory --path <file>`
-   (the area pages for those files), `autter memory "<what you are about to do>"`
-   (the matching sections) or `autter memory` (the map).
+   server, the Autter CLI prints the same memory: `autter memory for <file>...`
+   (the area pages for those files; no files means the ones changed in the
+   working tree), `autter memory search "<what you are about to do>"` (the
+   matching sections, ranked by meaning) or `autter memory show` (the map).
 3. Read the area's "What breaks" and "Conventions" and the ledger's "Doesn't
    work", and plan the change around them.
 

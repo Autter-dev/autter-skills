@@ -65,8 +65,9 @@ With the [Autter CLI](https://github.com/Autter-dev/autter-cli) installed,
 Claude Code, Codex, Gemini CLI, Droid, GitHub Copilot, OpenCode, Amp and Pi (the
 map at session start, the matching sections with each prompt, an area's page
 when a file in it is read). The skill covers every other agent, and tells all of
-them to read an area's page before changing code in it; `autter memory` prints
-the same memory in a terminal.
+them to read an area's page before changing code in it; `autter memory show`,
+`autter memory for <file>` and `autter memory search "<question>"` print the
+same memory in a terminal.
 
 The `get_wiki` tool requires a backend deployment that includes it. Refresh
 the client's MCP tool list after that deployment. If it is unavailable, the
