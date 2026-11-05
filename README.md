@@ -33,6 +33,11 @@ Then tell your agent what you want:
 - **"Audit our error handling for Autter Runtime and propose error codes."** —
   runs `autter-runtime-errors`, which reports coverage gaps and proposes a
   catalog, and edits only after you approve.
+- **`/restructure-codebase`** (optionally followed by an area to focus on) —
+  runs `restructure-codebase`, a full structural refactor: it lists every hidden
+  link, needless link, piece of surplus code and special case, redesigns from
+  first principles, fixes the whole list, and repeats until nothing worth
+  fixing is left. It only runs when you invoke it.
 
 Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-style`
 
@@ -50,6 +55,7 @@ Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-
 | [`otel-generic-style`](./otel-generic-style/) | Everything else — Java, .NET, PHP, Ruby, Elixir, Kotlin, … — via standard OTLP/HTTP + OTel env vars. |
 | [`autter-runtime-logs`](./autter-runtime-logs/) | Local debugging: reads `.autter/runtime/*.jsonl` (or `autter logs --local`) to explain failed or slow requests, one request id, and recent coded errors. |
 | [`autter-runtime-errors`](./autter-runtime-errors/) | Coverage audit: uncovered routes/jobs, plain throws on user-facing paths, swallowing and log-only catches, invalid codes, sensitive context keys. Proposes a catalog; applies only with approval. |
+| [`restructure-codebase`](./restructure-codebase/) | Whole-codebase refactor so agents read less per change, break less without noticing, and debug faster. Asks whether to also prune comments and tests, logs every problem (hidden links, needless links, surplus, special cases) before changing anything, groups them under first-principles fixes, then fixes and re-checks with subagents until nothing worth fixing is left. Invoked manually only. |
 
 ### Versions
 
