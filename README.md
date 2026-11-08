@@ -13,8 +13,15 @@ immediately.
 ## How to use this
 
 ```bash
-npx skills add Autter-dev/autter-skills --all
+npx @autter/skills
 ```
+
+It finds the coding agents on your machine (Claude Code, Cursor, Codex and
+others), asks before installing, and prints one short summary. It needs
+Node 18 or newer and works offline from the package, so there is nothing else
+to download. Add `--global` to install for your account instead of the current
+project, `--agent claude-code cursor` to choose agents, or `--list` to see the
+skills first.
 
 Then tell your agent what you want:
 
@@ -39,7 +46,11 @@ Then tell your agent what you want:
   first principles, fixes the whole list, and repeats until nothing worth
   fixing is left. It only runs when you invoke it.
 
-Want just one skill? `npx skills add Autter-dev/autter-skills --skill otel-node-style`
+Want just one skill? `npx @autter/skills --skill otel-node-style`
+
+Using the open [`skills`](https://github.com/vercel-labs/skills) CLI instead?
+`npx skills add Autter-dev/autter-skills` still works, but recent versions of
+that tool need a newer Node (22.20 or later) and list every installed folder.
 
 ## What's inside
 

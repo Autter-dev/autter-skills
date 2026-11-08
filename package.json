@@ -1,0 +1,26 @@
+{
+	"name": "@autter/skills",
+	"version": "1.0.0",
+	"description": "Install Autter agent skills with one command. Works on Node 18+.",
+	"bin": {
+		"autter-skills": "bin/autter-skills.js"
+	},
+	"scripts": {
+		"test": "node --test test/*.test.js"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"keywords": [
+		"autter",
+		"agent-skills",
+		"claude-code",
+		"cursor",
+		"codex"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Autter-dev/autter-skills.git"
+	},
+	"license": "MIT"
+}
