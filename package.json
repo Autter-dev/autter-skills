@@ -1,6 +1,6 @@
 {
 	"name": "@autter/skills",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Install Autter agent skills with one command. Works on Node 18+.",
 	"bin": {
 		"autter-skills": "bin/autter-skills.js"

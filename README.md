@@ -23,6 +23,16 @@ to download. Add `--global` to install for your account instead of the current
 project, `--agent claude-code cursor` to choose agents, or `--list` to see the
 skills first.
 
+For a project install it also asks whether to add the Autter MCP server
+(`https://api.autter.dev/mcp`) so your agent can check and finish Runtime
+setup itself. Yes is the default. It writes only `.mcp.json` (Claude Code) and
+`.cursor/mcp.json` (Cursor) in the project, adds an `autter` entry next to
+the servers already there, never replaces an existing `autter` entry, and
+never writes a key or token: the agent signs in when it shows
+**Authenticate**. Pass `--mcp` to add it without asking or `--no-mcp` to
+skip it. `--global` and `--yes` without `--mcp` print the instructions
+instead of writing a file.
+
 Then tell your agent what you want:
 
 - **"Use Autter's memory, wiki, and learnings to understand this repo before coding."** —
@@ -31,10 +41,13 @@ Then tell your agent what you want:
   what worked and what did not), its wiki, accepted learnings, production
   lessons, and indexed architecture through the authenticated Autter MCP, and
   checks the change against production lessons before committing.
-- **"use the skills to install Autter Runtime in this project."** — runs
-  `autter-runtime-setup`, which inventories your repo and routes each
-  service to the right style skill automatically — you don't need to pick
-  one yourself.
+- **"Use the Autter skills to set up Runtime for this project."** — runs
+  `autter-runtime-setup` end to end: it checks readiness through Autter MCP,
+  creates and stores the Runtime key after one yes from you, routes each
+  service to the right style skill automatically (you don't need to pick
+  one), reports each service's commit and release, wires source maps,
+  verifies, and tells you what is left for you (see
+  [Runtime setup with an agent](#runtime-setup-with-an-agent)).
 - **"Why did that request fail?"** (while running the app locally) — runs
   `autter-runtime-logs`, which reads the local request/operation records.
 - **"Audit our error handling for Autter Runtime and propose error codes."** —
@@ -57,7 +70,7 @@ that tool need a newer Node (22.20 or later) and list every installed folder.
 | Skill | Covers |
 | --- | --- |
 | [`autter-repo-context`](./autter-repo-context/) | Reads the signed-in user's memory pages, the repository's shared memory (a map, one page per area of the codebase, and a what-works ledger, rewritten nightly from the team's agent sessions, reviews, production, CI and scans) before editing an area, repository wiki Markdown, accepted process learnings and team rules, production lessons for the files being edited, indexed code/architecture/run commands, and Runtime issues, requests and evidence packs through Autter MCP. Checks the diff with `check_change` before committing and rates the lessons it used. Uses source commits and freshness metadata to ground coding work in how the user works, how the platform is built, and what already broke in production. |
-| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Inventories services, request entry points, queues and error classes, checks installed and deployed capabilities (through `get_runtime_setup` when Autter MCP is connected), configures the chosen ingestion path, routes built frontends to source-map upload and Next.js apps to server error capture, verifies stored traces/errors with readable stacks, breadcrumbs and trace links, metrics, logs/operations, request summaries, coded errors and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
+| [`autter-runtime-setup`](./autter-runtime-setup/) | **Start here.** Runs the whole setup through Autter MCP when it is connected: readiness checks (`get_runtime_setup`), the Runtime key (`create_runtime_key`, after one approval, stored straight into a secret store), and, after the deploy, one real issue's release, commit, suspect commits and pull request (`get_issue_lineage`). Inventories services, request entry points, queues and error classes, checks installed and deployed capabilities (through `get_runtime_setup` when Autter MCP is connected), configures the chosen ingestion path, routes built frontends to source-map upload and Next.js apps to server error capture, verifies stored traces/errors with readable stacks, breadcrumbs and trace links, metrics, logs/operations, request summaries, coded errors and LLM calls where configured, then records supported instrumentation conventions in the repo's existing agent-instruction files. Synthetic tests run only in isolation. |
 | [`otel-node-style`](./otel-node-style/) | Node.js (Express, Fastify, Koa, NestJS) and Next.js, via `@autter/runtime-node` / `@autter/runtime-next`, including per-request summaries, error catalogs and coded errors, server error hooks that keep stacks, caught errors counted from logs and `runtimeContext.degraded` for deliberate fallbacks, Next.js server errors through `onRequestError`, `withAutter(handler)` and error-page reporting, readable stacks for bundled servers, background work, local files, testing and logger-only mode. Has a short edge section; `otel-edge-style` has the full edge setup. |
 | [`otel-edge-style`](./otel-edge-style/) | Cloudflare Workers, Vercel Edge and Next.js `middleware.ts`, Deno and Bun, via `@autter/runtime-edge`, including caught errors, `rt.degraded` and Worker source maps. |
 | [`otel-browser-style`](./otel-browser-style/) | Browser apps — React, Vue, Svelte, Angular, vanilla SPA, static sites — via `@autter/runtime-browser`, including caught `console.error` errors, Next.js error pages, source-map upload in four steps (check, `autter-runtime sourcemaps setup`, an upload-only key stored straight into CI, `sourcemaps verify`), breadcrumbs, links from browser errors to server traces, coded API errors and request-id correlation, CSP violations and privacy-conscious recent action context. |
@@ -72,13 +85,18 @@ that tool need a newer Node (22.20 or later) and list every installed folder.
 
 | Skill | Version | Runtime it targets |
 | --- | --- | --- |
-| `autter-runtime-setup` | 1.11.0 | all of the below |
-| `otel-node-style` | 1.7.0 | `@autter/runtime-node` / `@autter/runtime-next` 1.9.0+ for caught errors, `runtimeContext.degraded`, `withAutter(handler)` and error pages (1.6.0 for error hooks, 1.5.0 for request summaries and codes, 1.4.0 for operations only); `@autter/runtime-cli` 1.3.0 for server source maps |
-| `otel-edge-style` | 1.2.0 | `@autter/runtime-edge` 1.0.0+ (1.3.0 for request counts, 1.4.0 for caught errors and `rt.degraded`), `@autter/runtime-next/edge` 1.5.0+ |
-| `otel-browser-style` | 1.5.0 | `@autter/runtime-browser` 1.6.0+ (1.8.0 for caught `console.error` errors, 1.4.0 for coded errors and request ids) |
-| `otel-python-style`, `otel-go-rust-style`, `otel-generic-style` | 1.4.0 | OTel SDKs + ingester 1.5.0+ |
+| `autter-runtime-setup` | 1.12.0 | all of the below |
+| `otel-node-style` | 1.8.0 | `@autter/runtime-node` / `@autter/runtime-next` 1.9.0+ for caught errors, `runtimeContext.degraded`, `withAutter(handler)` and error pages (1.6.0 for error hooks, 1.5.0 for request summaries and codes, 1.4.0 for operations only); `@autter/runtime-cli` 1.3.0 for server source maps |
+| `otel-edge-style` | 1.3.0 | `@autter/runtime-edge` 1.0.0+ (1.3.0 for request counts, 1.4.0 for caught errors and `rt.degraded`), `@autter/runtime-next/edge` 1.5.0+ |
+| `otel-browser-style` | 1.6.0 | `@autter/runtime-browser` 1.6.0+ (1.8.0 for caught `console.error` errors, 1.4.0 for coded errors and request ids) |
+| `otel-python-style`, `otel-go-rust-style`, `otel-generic-style` | 1.5.0 | OTel SDKs + ingester 1.5.0+ |
 | `autter-runtime-errors` | 1.1.0 | runtime-node/next 1.5.0+ (1.9.0 for the `logged-catch` fix) |
 | `autter-runtime-logs` | 1.0.0 | runtime-node/next 1.5.0+ |
+
+Commit and release detection needs `@autter/runtime-node` 1.16.0,
+`@autter/runtime-next` 1.11.0, or `autter_tracing.py` copied from Runtime
+1.20.0. Browser and edge SDKs detect nothing: they pass the full commit SHA as
+`release`.
 
 Self-hosted ingesters need **1.5.0+** for request summaries and code grouping,
 1.6.0/1.7.0 for source maps and upload keys, 1.10.0 for edge request counts,
@@ -150,24 +168,58 @@ The feature also needs the 1.3.3+ ingester and Autter backend/frontend
 deployment. Applications must be redeployed after instrumentation changes;
 OOM/restart correlation requires an ECS/Kubernetes event forwarder.
 
+## Runtime setup with an agent
+
+Tell your agent: **"Use the Autter skills to set up Runtime for this
+project."**
+
+What the agent does:
+
+1. Connects to Autter over MCP and checks readiness (`get_runtime_setup`).
+2. Creates the Runtime key after one yes from you and stores it straight
+   into `.env.local` (gitignored) and, when that host's CLI is signed in,
+   your host's secret store. It names the key only by its prefix.
+3. Instruments each service, makes each one report its commit and release,
+   and wires source maps (one more yes for the upload key).
+4. Verifies locally and checks readiness again.
+5. After you deploy, checks release health and one real issue's release,
+   commit, suspect commits and pull request.
+
+What only you do:
+
+- Install the Autter GitHub App and connect the repository, if the agent
+  says it is not connected.
+- Approve the MCP sign-in (**Authenticate** in the agent, **Authorize** in the
+  browser) and the key's creation.
+- Set the key on a host the agent could not reach, and `AUTTER_COMMIT` where
+  the platform provides no commit variable.
+- Review, merge and deploy.
+
+Details: [`autter-runtime-setup/references/agent-setup.md`](autter-runtime-setup/references/agent-setup.md).
+
 ## Getting an ingest key
 
-Create one on your Autter dashboard: **Settings → Access Tokens → Runtime
-ingest keys → Create key**. Pick the repository, then choose:
+With Autter MCP connected, let the agent do it: `autter-runtime-setup` calls
+`create_runtime_key` after you approve, and pipes the key into a secret store
+without printing it.
 
-- **Server** — secret, for backends and relays. Keep it in env vars, never
-  commit it.
-- **Client** — publishable, for browser-only apps with no backend. Scoped
-  to the exact origins you register it for.
+Without MCP, as a viewer, or with a token that lacks `mcp:write`, create one
+on your Autter dashboard: **Settings → Keys and tokens → Set up a key**, then
+pick the repository and one of:
 
-For source map uploads in CI, create an upload-only key in the repository's
-**Settings → Runtime → Source map upload key**, or let the agent create one
-through Autter MCP.
+- **Send errors from my backend service** — a server key (`autter_rt_…`),
+  secret, for backends and relays. Keep it in env vars, never commit it.
+- **Catch errors in my frontend** — a client key (`autter_rtc_…`),
+  publishable, for browser-only apps with no backend. Scoped to the exact
+  origins you register it for.
+- **Upload source maps from my build** — an upload-only key (`autter_rtu_…`)
+  for CI. The agent can also create this one through Autter MCP.
 
 Set the key in your own environment (shell profile, gitignored `.env`, or
 secret manager) as `AUTTER_RUNTIME_KEY` — **don't paste key values into
-the agent chat**. The skills are written to only ever reference the env
-var by name; the value never needs to reach the agent.
+the agent chat**. The skills only ever reference the env var by name; when
+the agent creates a key, the value goes straight from the tool into the
+secret store and is never shown in chat.
 
 ## Endpoint regressions
 
