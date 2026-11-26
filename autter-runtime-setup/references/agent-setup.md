@@ -38,7 +38,7 @@ Use the fallback (`SKILL.md` Step 0: the user creates the key under
 - `token.scopes` has no `mcp:write`;
 - the server is older than this flow: `create_runtime_key` is not in the
   tool list, or `get_runtime_setup` returns no `checks`;
-- `get_runtime_setup` says agent key creation is turned off for the
+- `get_runtime_setup` returns `key_creation` other than `allowed` (`disabled_by_organization`, `disabled_by_server`, or `unknown`): agent key creation is turned off for the
   organization. An owner or admin can turn on **Allow coding agents to create
   Runtime keys** in **Settings → Keys and tokens**; until then the user
   creates the key there.

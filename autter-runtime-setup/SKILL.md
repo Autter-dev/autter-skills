@@ -110,7 +110,7 @@ when:
 - `token.scopes` has no `mcp:write`;
 - the server lacks the new tools: `create_runtime_key` is not listed, or
   `get_runtime_setup` returns no `checks`;
-- `get_runtime_setup` says agent key creation is turned off for this
+- `get_runtime_setup` returns `key_creation` other than `allowed` (`disabled_by_organization`, `disabled_by_server`, or `unknown`): agent key creation is turned off for this
   organization, or `create_runtime_key` answers
   `runtime_key_creation_disabled`. Tell the user an owner or admin can turn on
   **Allow coding agents to create Runtime keys** in **Settings → Keys and
