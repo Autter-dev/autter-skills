@@ -52,7 +52,7 @@ The fallback replaces key creation only. Keep using the read tools you have
 from `whoami`. `repo_not_found` lists `available_repos` in its detail: use a
 matching name if one is there; otherwise ask the user to install the Autter
 GitHub App and connect the repository
-(https://docs.autter.dev/guides/github-setup), and carry on with the code
+(https://autter.dev/docs/guides/github-setup), and carry on with the code
 steps. Keys wait for the connection.
 
 `checks[]` has six entries, in this order. Keep them for Step 7 and the

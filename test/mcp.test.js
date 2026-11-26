@@ -93,6 +93,6 @@ test('mergeConfig never writes a secret field', () => {
 test('manual instructions cover only the chosen agents', () => {
 	assert.deepEqual(manualInstructions(['claude-code']), [`Claude Code: claude mcp add --transport http autter ${URL}`]);
 	assert.deepEqual(manualInstructions(['cursor']), [`Cursor: add {"mcpServers":{"autter":{"url":"${URL}"}}} to .cursor/mcp.json`]);
-	assert.deepEqual(manualInstructions(['codex']), [`Other agents: add the MCP server ${URL} (https://docs.autter.dev/guides/mcp-setup)`]);
+	assert.deepEqual(manualInstructions(['codex']), [`Other agents: add the MCP server ${URL} (https://autter.dev/docs/guides/mcp-setup)`]);
 	assert.equal(manualInstructions(['claude-code', 'codex']).length, 2);
 });

@@ -30,7 +30,7 @@ Use the server Runtime key, shared service/environment/release resource and
 active trace/span IDs. Preserve exception and failed `autter.outcome` trace
 events for issue capture; ordinary error logs do not create issues. Custom
 operation summaries follow the
-[operation contract](https://docs.autter.dev/runtime/operation-logging#other-languages-and-existing-otlp-loggers).
+[operation contract](https://autter.dev/docs/runtime/operation-logging#other-languages-and-existing-otlp-loggers).
 Propagate captured operation IDs into both logs and traces; a custom workflow
 ID or timestamp proximity does not create automatic evidence links. Node's
 `withRuntimeOperation` API is not available in other languages.

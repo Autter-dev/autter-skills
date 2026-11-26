@@ -90,7 +90,7 @@ warnings/error logs are diagnostic records, not automatically grouped issues.
 Keep exception and failed `autter.outcome` trace events for issue capture.
 Do not install Node logging APIs or imitate their async-local implementation.
 For custom operation summaries, follow the
-[operation contract](https://docs.autter.dev/runtime/operation-logging#other-languages-and-existing-otlp-loggers)
+[operation contract](https://autter.dev/docs/runtime/operation-logging#other-languages-and-existing-otlp-loggers)
 and explicitly share captured operation IDs with traces. Queue workflow IDs
 alone do not create that link.
 

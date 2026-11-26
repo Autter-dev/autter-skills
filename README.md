@@ -247,7 +247,7 @@ logger bridge. Browser capture keeps its own APIs and endpoint; edge runtimes
 use `@autter/runtime-edge` (see `otel-edge-style`).
 
 Read [Node operation setup](otel-node-style/references/operation-logging.md)
-or [customer logging docs](https://docs.autter.dev/runtime/operation-logging).
+or [customer logging docs](https://autter.dev/docs/runtime/operation-logging).
 Logs improve the evidence available to RCA and eligible draft fixes; they do
 not prove a diagnosis or a working fix. Delivery is best effort.
 

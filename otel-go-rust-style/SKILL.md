@@ -23,7 +23,7 @@ environment and release resource. Include active trace/span IDs where the
 bridge supports them. Ordinary error/warning logs remain diagnostics; keep
 exception/ERROR/failed `autter.outcome` traces for issue capture. For custom
 operation summaries, follow the
-[operation contract](https://docs.autter.dev/runtime/operation-logging#other-languages-and-existing-otlp-loggers)
+[operation contract](https://autter.dev/docs/runtime/operation-logging#other-languages-and-existing-otlp-loggers)
 and share captured operation IDs with traces explicitly. A workflow ID or
 timestamp match is insufficient for automatic linking.
 

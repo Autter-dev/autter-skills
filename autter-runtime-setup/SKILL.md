@@ -175,7 +175,7 @@ versions services report, whether source maps were uploaded recently,
 `linkage`, `checks` and `next_steps`.
 
 - `repo_not_found`: ask the user to install the Autter GitHub App and
-  connect the repository (https://docs.autter.dev/guides/github-setup), and
+  connect the repository (https://autter.dev/docs/guides/github-setup), and
   continue with the code steps. Its detail lists `available_repos`; use a
   matching name from it if there is one.
 - Read `checks[]` (`repository`, `github_app`, `server_key`,
