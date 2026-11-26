@@ -2,7 +2,7 @@
 name: otel-node-style
 description: Wire Autter Runtime into Node.js, Next.js and edge runtimes using the official packages. Check installed support, keep server error stacks, count caught errors and mark deliberate fallbacks, add Next.js onRequestError, withAutter and error pages, mount request summaries, add coded errors and operations, upload server source maps, configure logs, and verify errors, usage, requests, and LLM tracing.
 metadata:
-  version: "1.7.0"
+  version: "1.8.0"
   tags: [autter, telemetry, nodejs, nextjs, express, fastify, koa, edge, opentelemetry, llm, logging, requests, errors, breadcrumbs]
   author: autter
 ---
@@ -104,7 +104,9 @@ npm install @autter/runtime-node@^1.6.0
 
 Use the project's package manager and commit its lockfile. If 1.6.0 is not
 published yet, install `^1.5.0` and report the 1.6.0 features (error hooks,
-unhandled-rejection capture, breadcrumbs) as pending. Add `.autter/` to
+unhandled-rejection capture, breadcrumbs) as pending. Commit and release
+detection (below) needs **1.16.0** installed: the `^1.6.0` range allows it,
+but check the lockfile and upgrade if it resolved lower. Add `.autter/` to
 `.gitignore`, because 1.5.0+ writes local records there in development.
 
 Reuse the existing initialization if present. Otherwise, create an instrumentation entry that loads **before** the app. Do not register a second SDK or provider.
@@ -117,10 +119,24 @@ const server = initAutterServer({
   apiKey: process.env.AUTTER_RUNTIME_KEY,
   service: "<pick a name — e.g. the package/app name>",
   environment: "production",
-  release: process.env.GIT_SHA,
   retainTracesAboveMs: 2000,
 });
 ```
+
+**Release and commit.** Omit `release` (`@autter/runtime-node` 1.16.0+). The SDK
+reports `AUTTER_RELEASE` as the release, else the detected commit, and always
+sends `deployment.commit`. It reads the first value that is 7-40 hex characters
+from `AUTTER_COMMIT`, `GITHUB_SHA`, `VERCEL_GIT_COMMIT_SHA`,
+`CF_PAGES_COMMIT_SHA`, `GIT_SHA`, `GIT_COMMIT`, `COMMIT_SHA`, `SOURCE_COMMIT`,
+`RENDER_GIT_COMMIT`, `RAILWAY_GIT_COMMIT_SHA`, `HEROKU_SLUG_COMMIT` and
+`SOURCE_VERSION`, and never runs git. `service.version` and
+`deployment.environment` in `OTEL_RESOURCE_ATTRIBUTES` win. Turn detection off
+with `release: false` or `AUTTER_DETECT_RELEASE=false`. Before 1.16.0, omitting
+`release` reports no release: check the lockfile and upgrade, or keep an
+explicit `release` and report commit detection as pending. Next.js
+(`@autter/runtime-next` 1.11.0+, which needs runtime-node 1.16.0) does the
+same through `registerAutter`. See "Report the commit and release" in the
+[agent setup reference](../autter-runtime-setup/references/agent-setup.md).
 
 Start the app with `node --require ./instrument.cjs server.js` (or the
 equivalent `-r` flag / `NODE_OPTIONS="--require ./instrument.cjs"` for your
@@ -258,7 +274,6 @@ const { initAutterLogging } = require("@autter/runtime-node");
 initAutterLogging({
   apiKey: process.env.AUTTER_RUNTIME_KEY,   // omit → console/file sinks only
   service: "<service name>",
-  release: process.env.GIT_SHA,
   exceptions: "auto",                       // or "log", see below
   logging: { console: false },
 });
@@ -732,7 +747,6 @@ export async function register() {
       apiKey: process.env.AUTTER_RUNTIME_KEY!,
       service: "<app name>",
       environment: "production",
-      release: process.env.GIT_SHA,
       retainTracesAboveMs: 2000,
     });
   }
@@ -786,13 +800,18 @@ import { initAutterBrowser, AutterErrorBoundary } from "@autter/runtime-next/cli
 initAutterBrowser({
   endpoint: "/api/autter-runtime",
   service: "<app name>",
-  release: "<deployed commit SHA>",
+  release: process.env.NEXT_PUBLIC_AUTTER_RELEASE,
 });
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return <AutterErrorBoundary>{children}</AutterErrorBoundary>;
 }
 ```
+
+The browser SDK detects nothing, so `release` must be the full commit SHA, equal
+to the release used for the source map upload. `npx @autter/runtime-cli
+sourcemaps setup` prints the `next.config` `env` line that defines
+`NEXT_PUBLIC_AUTTER_RELEASE`.
 
 **Route handlers (1.5.0+):** wrap each handler with `withRuntimeRequest`
 from `@autter/runtime-next/server` (Node runtime only). `after()` is wired for
@@ -908,6 +927,9 @@ a **server** key from a secret binding (`wrangler secret put
 AUTTER_RUNTIME_KEY`, or the platform's secret store), never a client key and
 never a value in `wrangler.toml`. Do not install `@autter/runtime-node` in an
 edge bundle.
+
+The edge SDK detects no commit and sends no `deployment.commit`. If you set a
+release, pass the full commit SHA as `release` (for example `env.GIT_SHA`).
 
 With `@autter/runtime-edge` 1.3.0+, each request is also counted from its
 summary (request counts, failed-request share, release health); 1.2.0 and
@@ -1100,6 +1122,14 @@ curl -s 'localhost:3000/__autter-selftest/coded?variant=expected'
 - `expected`: a stored occurrence and a `degraded` summary, and **no** incident.
 
 ## Verify
+
+Run `npx @autter/runtime-node verify --service <name> --json` first
+(`@autter/runtime-node` 1.10.0+). It sends a test trace and log to the
+ingester under environment `verify` (never opens an issue) and checks the key,
+storage and release steps. Exit code 0: every check passed; 1: a step failed;
+2: the ingester could not be reached. A `release` step warning means no release
+was set. `commit` in the JSON needs 1.16.0. See "Report the commit and release"
+in the [agent setup reference](../autter-runtime-setup/references/agent-setup.md).
 
 1. Start the app with the instrumentation loaded and
    **`OTEL_LOG_LEVEL=debug`** set. OTel's diag logger is a no-op by

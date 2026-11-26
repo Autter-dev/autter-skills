@@ -2,7 +2,7 @@
 name: otel-generic-style
 description: Set up Autter Runtime for backend languages without a dedicated style skill using OpenTelemetry. Configure errors with codes, usage, LLM tracing, OTLP logs and request summaries, with capability and stored-evidence checks.
 metadata:
-  version: "1.4.0"
+  version: "1.5.0"
   tags: [autter, telemetry, opentelemetry, otlp, generic, llm, logging, requests, errors]
   author: autter
 ---
@@ -147,10 +147,16 @@ OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.autter.dev
 OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer ${AUTTER_RUNTIME_KEY}"
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_SERVICE_NAME=<service name>
-OTEL_RESOURCE_ATTRIBUTES=service.instance.id=${PROCESS_INSTANCE_ID},service.version=${GIT_SHA},deployment.environment.name=production
+OTEL_RESOURCE_ATTRIBUTES=service.instance.id=${PROCESS_INSTANCE_ID},service.version=${GIT_SHA},deployment.commit=${GIT_SHA},deployment.environment.name=production
 OTEL_TRACES_SAMPLER=parentbased_traceidratio
 OTEL_TRACES_SAMPLER_ARG=0.01
 ```
+
+`deployment.commit` must be 7 to 40 hex characters; set `GIT_SHA` to the
+deployed commit where the service runs. `vcs.ref.head.revision` is also
+accepted when the SDK already sets it. See
+[Report the commit and release](../autter-runtime-setup/references/agent-setup.md)
+(section "Report the commit and release").
 
 For Java specifically, this pairs with the Java agent for fully
 zero-code instrumentation:
@@ -193,8 +199,8 @@ growth without RSS.
 
 Every OTel SDK exposes roughly the same shape — find the equivalent of:
 
-1. Create a `Resource` with `service.name` (and optionally
-   `service.version`, `deployment.environment`).
+1. Create a `Resource` with `service.name` (and
+   `service.version`, `deployment.commit`, `deployment.environment.name`).
 2. Create a `TracerProvider`/`SdkTracerProvider` with:
    - An OTLP/HTTP span exporter pointed at
      `https://otlp.autter.dev/v1/traces`, with an `authorization: Bearer`

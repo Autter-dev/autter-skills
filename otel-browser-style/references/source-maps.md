@@ -222,14 +222,18 @@ project):
 Refusals: `insufficient_role` (a viewer) and `insufficient_scope` (no
 `mcp:write`) mean the path below. `sourcemap_upload_keys_unavailable` means
 the live ingester is older than 1.7.0: `detail.alternative` points at a
-server key, so take the path below with a server key.
+server key, so create one with `create_runtime_key` (`kind: "server"`,
+through the `autter-runtime-setup` flow) or take the path below with a server
+key.
 
 **Otherwise, the user creates it.** Without MCP, without the role, or for a
 platform you cannot set (Cloudflare Pages dashboard variables, a CI without
 a signed-in CLI), tell the user:
 
 > Create a source map upload key in Autter: **Repository → Settings →
-> Runtime → Source map upload key → Create upload key** (`settings_url`).
+> Runtime → Source map upload key → Create upload key** (`settings_url`),
+> or **Settings → Keys and tokens** → **Set up a key** → **Upload source maps
+> from my build**.
 > Then store it as `AUTTER_RUNTIME_KEY` where the production build runs,
 > yourself; I don't need to see it.
 
@@ -238,9 +242,12 @@ example `gh secret set AUTTER_RUNTIME_KEY --repo owner/repo`, which prompts
 for the value) or its `note`. For Cloudflare Pages: Cloudflare dashboard →
 Workers & Pages → the project → Settings → Variables and Secrets → Add, type
 **Secret**, name `AUTTER_RUNTIME_KEY`, for Production (and Preview if
-preview builds should upload). For a server key, the user creates it under
-**Settings → Access Tokens → Runtime ingest keys** instead. Never ask for the
-key in chat.
+preview builds should upload). When a server key is needed instead (for example after
+`sourcemap_upload_keys_unavailable`), call `create_runtime_key` with
+`kind: "server"` first, through the `autter-runtime-setup` flow: one approval,
+piped into a `set_secret` command. Otherwise the user creates it under
+**Settings → Keys and tokens** → **Set up a key** → **Send errors from my
+backend service**. Never ask for the key in chat.
 
 ### 4. Verify
 
@@ -305,6 +312,10 @@ Then check one symbolicated stack (see
 
 ## Keys and release
 
+For where the commit and release go in each stack, see
+"Report the commit and release" in the
+[agent setup reference](../../autter-runtime-setup/references/agent-setup.md).
+
 - Every integration reads the key from `AUTTER_RUNTIME_KEY`, only where the
   build or CI step runs: a CI secret, or the hosting platform's build
   environment variable. Never give it a client-exposed name (`VITE_…`,
@@ -318,11 +329,13 @@ Then check one symbolicated stack (see
 - Without a key, the bundler plugins turn no source maps on and inject no
   debug ids, so the build is exactly what it was, and `upload --best-effort`
   uploads nothing and exits `0`. Local builds and fork PRs keep working.
-- The release defaults to the commit being built: `GITHUB_SHA`,
-  `VERCEL_GIT_COMMIT_SHA`, `CF_PAGES_COMMIT_SHA`, `GIT_SHA`, then
-  `git rev-parse HEAD`. Releases may contain letters, digits, `.`, `_` and
-  `-`. Pass the same commit SHA to `initAutterBrowser({ release })` through
-  the build's public env or define mechanism. Debug ids match maps even when
+- The release defaults, in order, to `AUTTER_RELEASE`, then `GITHUB_SHA`,
+  `VERCEL_GIT_COMMIT_SHA`, `CF_PAGES_COMMIT_SHA`, `GIT_SHA` (any value), then
+  a commit from the SDK's other commit variables, then `git rev-parse HEAD`.
+  Releases may contain letters, digits, `.`, `_` and `-`. Pass the same full
+  commit SHA to `initAutterBrowser({ release })` through the build's public
+  env or define mechanism (`import.meta.env.VITE_AUTTER_RELEASE` for Vite,
+  `process.env.NEXT_PUBLIC_AUTTER_RELEASE` for Next.js). Debug ids match maps even when
   the two differ, but release-based features and the pre-1.6.0 fallback need
   them equal.
 

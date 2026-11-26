@@ -2,7 +2,7 @@
 name: otel-python-style
 description: Wire Autter Runtime into Python backends (Django, FastAPI, Flask, Celery, plain WSGI/ASGI) with the standard OpenTelemetry SDK and Runtime's copied autter_tracing.py, which keeps every error even under head sampling. Configure errors with codes, usage, LLM tracing, optional OTLP logs and request summaries; verify exporters and stored evidence.
 metadata:
-  version: "1.4.0"
+  version: "1.5.0"
   tags: [autter, telemetry, python, fastapi, flask, django, celery, opentelemetry, llm, logging, requests, errors]
   author: autter
 ---
@@ -264,7 +264,7 @@ Commit both files. They need `opentelemetry-sdk` (tested with 1.20, 1.27,
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.autter.dev
 OTEL_EXPORTER_OTLP_HEADERS=x-autter-key=${AUTTER_RUNTIME_KEY}
 OTEL_SERVICE_NAME=<service name>
-OTEL_RESOURCE_ATTRIBUTES=service.instance.id=${PROCESS_INSTANCE_ID},service.version=${GIT_SHA},deployment.environment.name=production
+OTEL_RESOURCE_ATTRIBUTES=service.instance.id=${PROCESS_INSTANCE_ID},deployment.environment.name=production
 OTEL_TRACES_SAMPLER=parentbased_traceidratio
 OTEL_TRACES_SAMPLER_ARG=0.01
 ```
@@ -275,7 +275,19 @@ OTEL_TRACES_SAMPLER_ARG=0.01
   `OTEL_EXPORTER_OTLP_HEADERS` are URL-encoded, and this one needs no space.
   `authorization=Bearer%20<key>` also works. Never write the key's value
   into a file; reference `AUTTER_RUNTIME_KEY` by name.
-- `service.version` is the release (the deployed commit SHA).
+- Release and commit: do not set `service.version` here. From Runtime 1.20.0,
+  `init_tracing()` fills `deployment.commit` from the commit variables
+  (`AUTTER_COMMIT`, `GITHUB_SHA`, `VERCEL_GIT_COMMIT_SHA`, `GIT_SHA`, and the
+  other platform ones in `COMMIT_ENV_VARS`; the first holding 7 to 40 hex
+  characters wins, lower-cased) when the resource has none, and sets
+  `service.version` to `AUTTER_RELEASE`, else the commit, when it is absent
+  or empty. A value you set explicitly wins. Turn it off with
+  `AUTTER_DETECT_RELEASE=false` or `init_tracing(detect_release=False)`. A
+  copy of `autter_tracing.py` from before Runtime 1.20.0 does not do this:
+  copy the file again. If the service runs where none of those variables is
+  set, set `AUTTER_COMMIT` to the deployed commit in the service's runtime
+  environment.
+  See [Report the commit and release](../autter-runtime-setup/references/agent-setup.md) (section "Report the commit and release") for the per-stack rules.
 - The ratio is for healthy traffic only. With `init_tracing()`, errors are
   exported whatever the ratio; keep 1% unless the user asks otherwise.
 
@@ -414,6 +426,12 @@ Drop `LlmAwareSampler` when the service makes no LLM calls (see
 [LLM calls](#llm-calls)). Every other processor the service registers keeps
 working; only the exporting one is wrapped.
 
+`init_tracing()` does not run here, so nothing fills the commit or release.
+Put both on the `resource` you build: `service.version` and
+`deployment.commit` set to the deployed commit (7 to 40 hex characters), for
+example `OTEL_RESOURCE_ATTRIBUTES=service.version=${GIT_SHA},deployment.commit=${GIT_SHA},deployment.environment.name=production`
+read by `Resource.create()`.
+
 ## Zero-code: `opentelemetry-instrument`
 
 `opentelemetry-instrument` (from `opentelemetry-distro`) configures the SDK
@@ -439,6 +457,9 @@ process memory gauge; add the gauge above if no existing instrument emits it.
 If `init_tracing()` also runs under the wrapper it leaves the wrapper's
 provider in place and logs `init_tracing(): an OpenTelemetry TracerProvider
 is already registered` when that sampler drops errors.
+
+Without `init_tracing()`, nothing fills the commit or release. Set them in
+the environment: `OTEL_RESOURCE_ATTRIBUTES=service.version=${GIT_SHA},deployment.commit=${GIT_SHA},service.instance.id=${PROCESS_INSTANCE_ID},deployment.environment.name=production`.
 
 ## Framework notes
 
@@ -745,6 +766,11 @@ marked `autter.tail_retained`. Only the LLM selftest span depends on the
 verification run only (`OTEL_TRACES_SAMPLER_ARG=1`) and drop it afterwards.
 
 ## Verify
+
+For the connection, key and release checks without the app, run
+`python3 compat.py verify --service <name>` (it ships next to
+`autter_tracing.py`; it sends one test event under environment `verify` and
+never opens an issue).
 
 1. Start the app with its normal configuration (the production ratio).
 2. `curl` `/__autter-selftest` once — it returns `{"ok": true}` only after

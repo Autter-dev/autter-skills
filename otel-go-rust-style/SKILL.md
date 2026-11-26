@@ -2,7 +2,7 @@
 name: otel-go-rust-style
 description: Wire Autter Runtime into Go and Rust backends using their OpenTelemetry SDKs. Configure errors with codes, usage, LLM tracing, OTLP logs and request summaries; verify exporters and stored evidence.
 metadata:
-  version: "1.4.0"
+  version: "1.5.0"
   tags: [autter, telemetry, go, rust, opentelemetry, llm, logging, requests, errors]
   author: autter
 ---
@@ -137,6 +137,7 @@ func initObservability(ctx context.Context, serviceName string) (func(context.Co
         semconv.ServiceName(serviceName),
         attribute.String("service.instance.id", os.Getenv("AUTTER_RUNTIME_INSTANCE_ID")),
         attribute.String("service.version", os.Getenv("GIT_SHA")),
+        attribute.String("deployment.commit", os.Getenv("GIT_SHA")),
         attribute.String("deployment.environment.name", os.Getenv("DEPLOYMENT_ENVIRONMENT")),
     ))
     tp := sdktrace.NewTracerProvider(
@@ -148,6 +149,13 @@ func initObservability(ctx context.Context, serviceName string) (func(context.Co
     return tp.Shutdown, nil
 }
 ```
+
+Set both `service.version` and `deployment.commit` (above; Rust too). Only 7 to 40
+hex characters count as a commit. Set `GIT_SHA` to the deployed commit where the
+service runs, or read whichever commit variable the host provides. The SDK also
+accepts `vcs.ref.head.revision` when it already sets that. See
+[Report the commit and release](../autter-runtime-setup/references/agent-setup.md)
+(section "Report the commit and release").
 
 Call `initObservability(ctx, "my-service")` at process start, and call the
 returned shutdown func on graceful termination.
@@ -319,6 +327,7 @@ fn init_observability(service_name: &str) -> anyhow::Result<SdkTracerProvider> {
         .with_attributes([
             KeyValue::new("service.instance.id", std::env::var("AUTTER_RUNTIME_INSTANCE_ID").unwrap_or_default()),
             KeyValue::new("service.version", std::env::var("GIT_SHA").unwrap_or_default()),
+            KeyValue::new("deployment.commit", std::env::var("GIT_SHA").unwrap_or_default()),
             KeyValue::new("deployment.environment.name", std::env::var("DEPLOYMENT_ENVIRONMENT").unwrap_or_default()),
         ])
         .build();
