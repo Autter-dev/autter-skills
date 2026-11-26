@@ -2,7 +2,7 @@
 name: otel-edge-style
 description: Wire Autter Runtime into edge and fetch-only runtimes (Cloudflare Workers, Vercel Edge and Next.js middleware, Deno, Bun) with @autter/runtime-edge. Add request summaries and coded errors, count caught errors and mark deliberate fallbacks, bind the server key by name, flush with waitUntil, upload Worker source maps, and verify stored evidence.
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   tags: [autter, telemetry, edge, cloudflare-workers, vercel-edge, nextjs-middleware, deno, bun, requests, errors]
   author: autter
 ---
@@ -89,6 +89,12 @@ export default withAutter(
   },
 );
 ```
+
+The edge SDK detects no commit and sends no `deployment.commit`. Set the
+`GIT_SHA` binding to the full deployed commit so Autter can map the release to
+its commit. For where the commit and release go in each stack, see
+"Report the commit and release" in the
+[agent setup reference](../autter-runtime-setup/references/agent-setup.md).
 
 **Vercel Edge / Next.js `middleware.ts`**
 

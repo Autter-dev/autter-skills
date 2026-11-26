@@ -2,7 +2,7 @@
 name: otel-browser-style
 description: Wire Autter Runtime into browser apps, including source map upload for readable stacks, caught console.error errors, Next.js error pages, breadcrumbs, links from browser errors to server traces, coded API errors, request-id correlation with server requests, CSP violations, recent user actions, error boundaries, and a working browser telemetry route.
 metadata:
-  version: "1.5.0"
+  version: "1.6.0"
   tags: [autter, telemetry, browser, react, spa, error-tracking, sourcemaps, breadcrumbs, tracing, request-id, errors]
   author: autter
 ---
@@ -161,9 +161,17 @@ secret server key. SDK init in modes 1–3 is always:
 initAutterBrowser({
   endpoint: "/api/autter-runtime", // same-origin relay route
   service: "<app name>",
-  release: "<deployed commit SHA>",
+  release: import.meta.env.VITE_AUTTER_RELEASE, // Next.js: process.env.NEXT_PUBLIC_AUTTER_RELEASE
 });
 ```
+
+The browser SDK detects no commit. `release` is the build-time constant that
+`npx @autter/runtime-cli sourcemaps setup` prints (the snippet it prints is the
+one to use for the project's build tool). It must be the full commit SHA and
+equal the release the source maps are uploaded under. For where the commit and
+release go in each stack, see
+"Report the commit and release" in the
+[agent setup reference](../autter-runtime-setup/references/agent-setup.md).
 
 Never put an `autter_rt_*` server key in the browser bundle.
 
@@ -215,6 +223,14 @@ initAutterBrowser({
 ```
 
 Warn: "third-party cross-origin, ad-blockers will drop some events."
+
+To get the client key: with Autter MCP, call `create_runtime_key` with
+`kind: "client"` and `allowed_origins` set to the origins the user confirms.
+Its `local_env_file` command stores the key; rename the variable to the
+framework's public one (`VITE_AUTTER_RUNTIME_KEY`,
+`NEXT_PUBLIC_AUTTER_RUNTIME_KEY`), as the tool's note says, and pass it as
+`clientKey`. Otherwise the user creates it under **Settings → Keys and tokens
+→ Set up a key → Catch errors in my frontend**. Name it by prefix only.
 
 Non-Node custom backend (no examples match): add one thin passthrough
 route at `/api/autter-runtime` that enforces a JSON content-type and a
@@ -286,7 +302,7 @@ frontend:
 3. **Key:** an upload-only key (`autter_rtu_…`) as `AUTTER_RUNTIME_KEY`
    where the production build runs, created with `create_sourcemap_upload_key`
    and stored straight into the CI secret on stdin, or created by the user on
-   the Runtime settings page. Name it by prefix only; never write it to a file.
+   **Settings → Keys and tokens → Set up a key → Upload source maps from my build**. Name it by prefix only; never write it to a file.
 4. **Verify:** `npx autter-runtime sourcemaps verify <outputDir> --json`
    after a production build; in CI after the build step.
 
@@ -321,7 +337,7 @@ and root cause analysis reads them.
 import { initAutterBrowser } from "@autter/runtime-browser";
 import { enableBreadcrumbs } from "@autter/runtime-browser/breadcrumbs";
 
-initAutterBrowser({ endpoint: "/api/autter-runtime", service: "<app name>", release: "<deployed commit SHA>" });
+initAutterBrowser({ endpoint: "/api/autter-runtime", service: "<app name>", release: import.meta.env.VITE_AUTTER_RELEASE }); // Next.js: process.env.NEXT_PUBLIC_AUTTER_RELEASE
 enableBreadcrumbs(); // or enableBreadcrumbs({ console: false })
 ```
 
