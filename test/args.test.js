@@ -23,3 +23,16 @@ test('rejects unknown flags and names that are not plain identifiers', () => {
 	assert.equal(errors.length, 3);
 	assert.match(errors[0], /Unknown option: --nope/);
 });
+
+test('parses --mcp and --no-mcp', () => {
+	assert.equal(parseArgs(['--mcp']).opts.mcp, true);
+	assert.equal(parseArgs(['--no-mcp']).opts.noMcp, true);
+	const none = parseArgs([]);
+	assert.equal(none.opts.mcp, false);
+	assert.equal(none.opts.noMcp, false);
+});
+
+test('--mcp with --no-mcp is an error', () => {
+	const { errors } = parseArgs(['--mcp', '--no-mcp']);
+	assert.deepEqual(errors, ["--mcp and --no-mcp can't be used together"]);
+});
